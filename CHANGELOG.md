@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.6 - 2026-06-12
+
+- Fixed profile enrichment so queued users never receive the current logged-in account's avatar, bio, or follower count.
+- Profile enrichment now only accepts X profile data when the parsed `screen_name` matches the target username.
+- Added automatic cleanup for suspicious shared queue profile data caused by the previous enrichment bug.
+- Updated project links to the public GitHub repository.
+
 ## 0.3.5 - 2026-06-12
 
 - Added an in-app multilingual Help manual in the dashboard.

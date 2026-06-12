@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "XShield",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "X/Twitter spam account detection and block queue manager.",
-  "homepage_url": "https://github.com/your-name/xshield",
+  "homepage_url": "https://github.com/smthdagg/XShield",
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",

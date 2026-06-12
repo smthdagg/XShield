@@ -93,6 +93,14 @@ function normalizeScreenName(username: string): string {
   return username.replace(/^@+/, '').trim();
 }
 
+function isSameScreenName(left: string | undefined, right: string | undefined): boolean {
+  return normalizeScreenName(left ?? '').toLowerCase() === normalizeScreenName(right ?? '').toLowerCase();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function parseProfileNumber(value: string | undefined): number | undefined {
   if (!value) return undefined;
   const parsed = Number(value.replace(/,/g, ''));
@@ -116,24 +124,60 @@ function findFirst(source: string, patterns: RegExp[]): string | undefined {
   return undefined;
 }
 
+function findProfileSlice(username: string, html: string): string | undefined {
+  const normalizedUsername = normalizeScreenName(username);
+  if (!normalizedUsername) return undefined;
+
+  const escapedUsername = escapeRegExp(normalizedUsername);
+  const screenNamePatterns = [
+    new RegExp(`"screen_name"\\s*:\\s*"${escapedUsername}"`, 'i'),
+    new RegExp(`\\\\"screen_name\\\\"\\s*:\\s*\\\\"${escapedUsername}\\\\"`, 'i'),
+  ];
+
+  for (const pattern of screenNamePatterns) {
+    const match = pattern.exec(html);
+    if (!match || typeof match.index !== 'number') continue;
+
+    const start = Math.max(0, match.index - 2500);
+    const end = Math.min(html.length, match.index + 7000);
+    const slice = html.slice(start, end);
+    if (/followers_count|normal_followers_count|profile_image_url_https|description/.test(slice)) {
+      return slice;
+    }
+  }
+
+  return undefined;
+}
+
 function extractProfileFromHtml(username: string, html: string): Partial<XUserProfile> {
-  const followersValue = findFirst(html, [
+  const profileSlice = findProfileSlice(username, html);
+  if (!profileSlice) return {};
+
+  const parsedUsername = decodeJsonString(
+    findFirst(profileSlice, [
+      /"screen_name"\s*:\s*"([^"]+)"/,
+      /\\"screen_name\\"\s*:\s*\\"([^"]+)\\"/,
+    ]),
+  );
+  if (!isSameScreenName(parsedUsername, username)) return {};
+
+  const followersValue = findFirst(profileSlice, [
     /"followers_count"\s*:\s*(\d+)/,
     /\\"followers_count\\"\s*:\s*(\d+)/,
     /"normal_followers_count"\s*:\s*(\d+)/,
     /\\"normal_followers_count\\"\s*:\s*(\d+)/,
   ]);
   const displayName = decodeJsonString(
-    findFirst(html, [/"name"\s*:\s*"([^"]+)"/, /\\"name\\"\s*:\s*\\"([^"]+)\\"/]),
+    findFirst(profileSlice, [/"name"\s*:\s*"([^"]+)"/, /\\"name\\"\s*:\s*\\"([^"]+)\\"/]),
   );
   const bio = decodeJsonString(
-    findFirst(html, [
+    findFirst(profileSlice, [
       /"description"\s*:\s*"([^"]*)"/,
       /\\"description\\"\s*:\s*\\"([^"]*)\\"/,
     ]),
   );
   const avatarUrl = decodeJsonString(
-    findFirst(html, [
+    findFirst(profileSlice, [
       /"profile_image_url_https"\s*:\s*"([^"]+)"/,
       /\\"profile_image_url_https\\"\s*:\s*\\"([^"]+)\\"/,
     ]),
@@ -141,7 +185,7 @@ function extractProfileFromHtml(username: string, html: string): Partial<XUserPr
   const followersCount = parseProfileNumber(followersValue);
 
   return {
-    username,
+    username: parsedUsername,
     displayName,
     bio,
     avatarUrl,
@@ -276,6 +320,14 @@ async function enrichCandidateBeforeQueue(candidate: CandidateUser): Promise<Can
   }
 
   const snapshot = await fetchXProfileSnapshot(candidate.username);
+  if (snapshot.username && !isSameScreenName(snapshot.username, candidate.username)) {
+    await addLog(
+      'warn',
+      `Skipped profile enrichment for @${candidate.username}: fetched @${snapshot.username}`,
+      'profile',
+    );
+    return candidate;
+  }
   if (
     typeof snapshot.followersCount !== 'number' &&
     !snapshot.followersText &&
@@ -297,6 +349,48 @@ async function enrichCandidateBeforeQueue(candidate: CandidateUser): Promise<Can
   return enriched;
 }
 
+async function clearSuspiciousSharedQueueProfileData(): Promise<void> {
+  const items = await db.blockQueue.toArray();
+  const groups = new Map<string, BlockQueueItem[]>();
+
+  items.forEach((item) => {
+    if (!item.avatarUrl || !item.bio || typeof item.followersCount !== 'number') return;
+    const fingerprint = [item.avatarUrl, item.bio, item.followersCount, item.followersText ?? ''].join('\u0001');
+    groups.set(fingerprint, [...(groups.get(fingerprint) ?? []), item]);
+  });
+
+  const suspiciousItems = Array.from(groups.values()).flatMap((group) => {
+    const usernames = new Set(group.map((item) => normalizeScreenName(item.username).toLowerCase()));
+    return usernames.size >= 3 ? group : [];
+  });
+
+  if (suspiciousItems.length === 0) return;
+
+  await db.transaction('rw', db.blockQueue, db.candidates, async () => {
+    await Promise.all(
+      suspiciousItems.map(async (item) => {
+        await db.blockQueue.update(item.id, {
+          displayName: undefined,
+          bio: undefined,
+          avatarUrl: undefined,
+          followersCount: undefined,
+          followersText: undefined,
+          updatedAt: Date.now(),
+        });
+        await db.candidates.update(item.userId, {
+          displayName: undefined,
+          bio: undefined,
+          avatarUrl: undefined,
+          followersCount: undefined,
+          followersText: undefined,
+          updatedAt: Date.now(),
+        });
+      }),
+    );
+  });
+  await addLog('warn', `Cleared suspicious shared profile data from ${suspiciousItems.length} queue item(s)`, 'profile');
+}
+
 export const useAppStore = create<AppState>((set, get) => ({
   candidates: [],
   blockedUsers: [],
@@ -307,6 +401,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   async loadAll() {
     await seedDefaults();
     await ensureCanonicalUserRecords();
+    await clearSuspiciousSharedQueueProfileData();
     const [candidates, blockedUsers, rules, blockQueue, logs, settings] = await Promise.all([
       db.candidates.orderBy('updatedAt').reverse().toArray(),
       db.blockedUsers.orderBy('blockedAt').reverse().toArray(),

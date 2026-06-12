@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "XShield",
+  "version": "0.3.5",
+  "description": "X/Twitter spam account detection and block queue manager.",
+  "homepage_url": "https://github.com/your-name/xshield",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "permissions": ["storage", "tabs", "scripting", "alarms", "cookies"],
+  "host_permissions": ["https://x.com/*", "https://twitter.com/*", "https://abs.twimg.com/*"],
+  "background": {
+    "service_worker": "src/background/index.ts",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "js": ["src/content/index.ts"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "options_page": "options.html"
+}

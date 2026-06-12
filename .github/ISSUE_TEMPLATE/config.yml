@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 使用说明
+    url: https://github.com/your-name/xshield/blob/main/docs/USER_GUIDE.zh-CN.md
+    about: 先阅读使用说明和常见问题。
+  - name: 安全问题
+    url: https://github.com/your-name/xshield/security/policy
+    about: 请不要公开提交安全漏洞。

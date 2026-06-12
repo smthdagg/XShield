@@ -1,0 +1,27 @@
+{
+  "name": "xshield",
+  "version": "0.3.5",
+  "private": true,
+  "description": "Open-source Chrome extension for detecting and managing spam-like accounts on X/Twitter.",
+  "license": "MIT",
+  "scripts": {
+    "dev": "corepack pnpm --filter @xshield/extension dev",
+    "build": "corepack pnpm -r build",
+    "test": "corepack pnpm -r test",
+    "lint": "corepack pnpm -r lint",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.268",
+    "@types/node": "^20.14.10",
+    "@typescript-eslint/eslint-plugin": "^7.16.0",
+    "@typescript-eslint/parser": "^7.16.0",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-react-hooks": "^4.6.2",
+    "prettier": "^3.3.3",
+    "typescript": "^5.5.3",
+    "vitest": "^2.0.3"
+  },
+  "packageManager": "pnpm@9.5.0"
+}

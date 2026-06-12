@@ -1,0 +1,11 @@
+node_modules
+dist
+github-release
+.codex
+.agents
+.turbo
+.vite
+coverage
+*.log
+.DS_Store
+Thumbs.db

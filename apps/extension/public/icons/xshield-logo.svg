@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="XShield logo">
+  <defs>
+    <linearGradient id="bronze" x1="24" y1="10" x2="104" y2="118" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f5d48b"/>
+      <stop offset="0.42" stop-color="#b9782f"/>
+      <stop offset="1" stop-color="#563016"/>
+    </linearGradient>
+    <linearGradient id="jade" x1="36" y1="28" x2="92" y2="112" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#eff8ed"/>
+      <stop offset="1" stop-color="#74b77e"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="8" stdDeviation="6" flood-color="#0f1612" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="#101512"/>
+  <path
+    d="M64 9c17 13 34 18 51 19-2 42-17 72-51 91-34-19-49-49-51-91 17-1 34-6 51-19z"
+    fill="url(#bronze)"
+    filter="url(#shadow)"
+  />
+  <path
+    d="M64 20c13 10 27 14 40 15-3 32-15 56-40 72-25-16-37-40-40-72 13-1 27-5 40-15z"
+    fill="url(#jade)"
+    stroke="#f7df9d"
+    stroke-width="4"
+  />
+  <path
+    d="M36 43h56M31 59h66M36 75h56"
+    stroke="#794518"
+    stroke-width="5"
+    stroke-linecap="round"
+    opacity="0.62"
+  />
+  <path
+    d="M37 33c6 6 12 9 19 9M91 33c-6 6-12 9-19 9M37 87c6-6 12-9 19-9M91 87c-6-6-12-9-19-9"
+    fill="none"
+    stroke="#f1cf83"
+    stroke-width="4"
+    stroke-linecap="round"
+  />
+  <path
+    d="M40 36l19 28-20 29h15l12-18 12 18h16L73 63l19-27H77L67 52 56 36H40z"
+    fill="#0d1110"
+  />
+  <path
+    d="M47 38l19 27 18 26"
+    stroke="#f8f4e9"
+    stroke-width="6"
+    stroke-linecap="round"
+  />
+  <circle cx="96" cy="32" r="12" fill="#b41d24" stroke="#f8df9a" stroke-width="3"/>
+  <path d="M90 32h12M96 26v12" stroke="#f8df9a" stroke-width="3" stroke-linecap="round"/>
+</svg>

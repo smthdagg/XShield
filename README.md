@@ -1,5 +1,9 @@
 # XShield
 
+<p align="center">
+  <img src="assets/xshield-logo-1024.png" alt="XShield logo" width="220" />
+</p>
+
 **XShield** is a local-first Chrome extension for detecting spam-like, promotional, scam, and mass-reply accounts on X/Twitter, reviewing candidates manually, and blocking confirmed accounts through a controllable queue.
 
 XShield is designed as a human-reviewed safety assistant. It keeps rules, candidates, queues, block history, whitelist data, and logs in the browser's local IndexedDB by default.

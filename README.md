@@ -302,3 +302,27 @@ Guide complet : [docs/USER_GUIDE.fr.md](docs/USER_GUIDE.fr.md)
 - Sponsorship: [docs/SPONSORSHIP.md](docs/SPONSORSHIP.md)
 - Security: [SECURITY.md](SECURITY.md)
 - License: [MIT](LICENSE)
+
+---
+
+## OpenWrt 私有源安装 / Install from the private OpenWrt feed
+
+本项目已在私有 OpenWrt 软件源中预留目录（目录名与仓库同名）：
+`https://smthdagg.github.io/Smthdagg-Repo-feeds/XShield/`
+
+包发布后，在 OpenWrt 路由器上执行 / Once packages are published, run on the router:
+
+```sh
+# 1) 导入签名公钥（一次即可，长期不变） / import the signing key (once, long-lived)
+wget -O /etc/opkg/keys/f7050198aa77cf15 \
+  https://raw.githubusercontent.com/smthdagg/Smthdagg-Repo-feeds/main/wloc.pub
+# 2) 添加本项目源 / add this project's feed
+echo "src/gz XShield https://smthdagg.github.io/Smthdagg-Repo-feeds/XShield" \
+  >> /etc/opkg/customfeeds.conf
+# 3) 安装 / install
+opkg update && opkg install XShield
+```
+
+> 状态：目录已预留，尚未发布 OpenWrt 包；发布后本节会更新为具体版本号。
+>
+> Status: directory reserved, no packages published yet; this section will be updated with concrete versions once packages ship.

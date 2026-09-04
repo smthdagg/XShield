@@ -1,486 +1,448 @@
-import type { ReactNode } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+/**
+ * XShield dashboard — five pages:
+ *   1. Triggered users (nickname / @handle / reply text; remove, whitelist,
+ *      block one, select-all block)
+ *   2. Blocked log (blocked users + pending queue + today counter)
+ *   3. Whitelist
+ *   4. Rules & sync (cloud + custom keywords, auto-block picks, GitHub)
+ *   5. Script settings (master, hide/highlight mode, filters, language)
+ */
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   Ban,
   CheckCircle2,
-  ClipboardList,
-  CircleHelp,
   Download,
-  Gauge,
+  ExternalLink,
   ListChecks,
-  Pause,
-  Play,
-  Plus,
-  RefreshCw,
-  RotateCcw,
-  Search,
-  Settings,
-  SlidersHorizontal,
+  ScrollText,
+  Settings as SettingsIcon,
+  ShieldCheck,
   Trash2,
+  Upload,
+  X,
 } from 'lucide-react';
-import type {
-  AppSettings,
-  BlockAdapterMode,
-  BlockedUser,
-  BlockQueueItem,
-  CandidateUser,
-  LanguageMode,
-  MatchField,
-  RuleExecutionMode,
-  RuleType,
-  XUserProfile,
-} from '@xshield/shared';
-import { DEFAULT_BLOCK_EXECUTOR_CONFIG, DEFAULT_SCORE_THRESHOLD } from '@xshield/shared';
-import { useAppStore, type RuleDraft } from '../store/useAppStore';
-import { dashboardCopy } from './i18n';
-import { helpManuals } from './helpContent';
-import { PROJECT_INFO } from '../projectInfo';
+import {
+  extractCleanScreenName,
+  isKeywordRegex,
+  parseKeywords,
+  pruneLogs,
+  exportLogs,
+  type XLogEntry,
+} from '../store/blockerStorage';
+import { dashboardCopy, getLanguage } from './i18n';
 
-const navItems = [
-  { id: 'overview', labelKey: 'overview', icon: Gauge },
-  { id: 'candidates', labelKey: 'candidates', icon: ClipboardList },
-  { id: 'rules', labelKey: 'rules', icon: SlidersHorizontal },
-  { id: 'queue', labelKey: 'queue', icon: ListChecks },
-  { id: 'blocked', labelKey: 'blocked', icon: Ban },
-  { id: 'whitelist', labelKey: 'whitelist', icon: CheckCircle2 },
-  { id: 'logs', labelKey: 'logs', icon: Search },
-  { id: 'settings', labelKey: 'settings', icon: Settings },
-  { id: 'help', labelKey: 'help', icon: CircleHelp },
-] as const;
+type ViewId = 'triggered' | 'blockedLog' | 'whitelist' | 'rules' | 'logs' | 'settings';
 
-const fields: MatchField[] = ['username', 'displayName', 'bio', 'postContent'];
-type ViewId = (typeof navItems)[number]['id'];
-type UiLanguage = 'en' | 'zh-CN' | 'zh-TW' | 'ja' | 'ko' | 'fr';
-type CopyKey =
-  | (typeof navItems)[number]['labelKey']
-  | 'appSubtitle'
-  | 'manualSearch'
-  | 'searchScope'
-  | 'keyword'
-  | 'search'
-  | 'triggered'
-  | 'recentTriggers'
-  | 'profileLink'
-  | 'description'
-  | 'followers'
-  | 'matched'
-  | 'falsePositive'
-  | 'blocked'
-  | 'deleteSelected'
-  | 'whitelistSelected'
-  | 'selectAll'
-  | 'queueSelected'
-  | 'queueAndRun'
-  | 'exportBlocked'
-  | 'exportFormat'
-  | 'ruleMode'
-  | 'automatic'
-  | 'manual'
-  | 'start'
-  | 'stop'
-  | 'evaluateNow'
-  | 'blockMode'
-  | 'mock'
-  | 'real'
-  | 'language'
-  | 'system'
-  | 'saveSettings'
-  | 'runBatch'
-  | 'manualBlockNow'
-  | 'manualBlockWarning'
-  | 'queueSettingsHint'
-  | 'newRule'
-  | 'editRule'
-  | 'ruleType'
-  | 'content'
-  | 'fieldUsername'
-  | 'fieldDisplayName'
-  | 'fieldBio'
-  | 'fieldPostContent'
-  | 'onePerLine'
-  | 'ruleLines'
-  | 'score'
-  | 'caseSensitive'
-  | 'save'
-  | 'cancel'
-  | 'deleteRule'
-  | 'clear'
-  | 'status'
-  | 'actions'
-  | 'retries'
-  | 'lastError'
-  | 'restore'
-  | 'clearLogs'
-  | 'resetDraft'
-  | 'noCandidates'
-  | 'noSearchResults'
-  | 'queueEmpty'
-  | 'whitelistEmpty'
-  | 'logsEmpty'
-  | 'scoreThreshold'
-  | 'batchSize'
-  | 'intervalMinutes'
-  | 'jitterSeconds'
-  | 'maxRetries'
-  | 'cooldownMinutes'
-  | 'languageSimplifiedChinese'
-  | 'languageTraditionalChinese'
-  | 'languageEnglish'
-  | 'languageJapanese'
-  | 'languageKorean'
-  | 'languageFrench'
-  | 'running'
-  | 'scanningCurrentPage'
-  | 'runningQueue'
-  | 'ruleRunResult'
-  | 'queueRunDone'
-  | 'queueRunSkipped';
-
-const copy = dashboardCopy as Record<UiLanguage, Record<CopyKey, string>>;
-type BlockedExportFormat = 'txt' | 'csv' | 'json' | 'ndjson' | 'sql';
-
-const emptyRule: RuleDraft = {
-  type: 'keyword',
-  content: '',
-  fields: ['username', 'displayName', 'bio', 'postContent'],
-  enabled: true,
-  caseSensitive: false,
-  score: DEFAULT_SCORE_THRESHOLD,
-};
-
-function getLanguage(settings?: AppSettings): UiLanguage {
-  if (settings?.language === 'zh') return 'zh-CN';
-  if (
-    settings?.language === 'en' ||
-    settings?.language === 'zh-CN' ||
-    settings?.language === 'zh-TW' ||
-    settings?.language === 'ja' ||
-    settings?.language === 'ko' ||
-    settings?.language === 'fr'
-  ) {
-    return settings.language;
-  }
-
-  const systemLanguage = navigator.language.toLowerCase();
-  if (systemLanguage.startsWith('zh-tw') || systemLanguage.startsWith('zh-hk')) return 'zh-TW';
-  if (systemLanguage.startsWith('zh')) return 'zh-CN';
-  if (systemLanguage.startsWith('ja')) return 'ja';
-  if (systemLanguage.startsWith('ko')) return 'ko';
-  if (systemLanguage.startsWith('fr')) return 'fr';
-  return 'en';
+interface SpamRecord {
+  id: string;
+  text: string;
+  user: string;
+  displayName: string;
+  reason: string;
+  time: number;
+  isAutoBlock: boolean;
 }
 
-function formatMessage(template: string, values: Record<string, string | number>): string {
-  return Object.entries(values).reduce(
-    (message, [key, value]) => message.replace(`{${key}}`, String(value)),
-    template,
+const DEFAULTS: Record<string, unknown> = {
+  enabled: true,
+  highlightMode: false,
+  blockedCount: 0,
+  blockedHistory: [] as SpamRecord[],
+  cloudKeywords: '',
+  keywords: '',
+  autoBlockKeywords: [] as string[],
+  disabledCloudKeywords: [] as string[],
+  whitelist: [] as string[],
+  checkUsername: true,
+  onlyComments: true,
+  blockSpecialChars: false,
+  blockEmoji: false,
+  blockGrok: false,
+  cloudEnabled: true,
+  cloudOwnerRepo: '',
+  githubToken: '',
+  githubOwnerRepo: '',
+  githubBranch: 'main',
+  autoBlockQueue: [] as string[],
+  queueInfo: {} as Record<string, { displayName?: string; text?: string }>,
+  autoBlockToday: 0,
+  autoBlockPausedUntil: 0,
+  blockedUsersOnX: [] as string[],
+  lastSyncTime: 0,
+  syncStatus: '',
+  syncError: '',
+  language: 'system' as string,
+  xshieldLogs: [] as XLogEntry[],
+};
+
+function DataPanel({ title, meta, children }: { title: string; meta?: string; children: ReactNode }) {
+  return (
+    <section className="data-panel">
+      <header className="panel-header">
+        <h2>{title}</h2>
+        {meta && <span className="panel-meta">{meta}</span>}
+      </header>
+      <div className="panel-body">{children}</div>
+    </section>
   );
 }
 
-function normalizeUsername(username: string): string {
-  return username.replace(/^@+/, '').trim();
-}
-
-function getProfileUrl(profile: Pick<XUserProfile, 'username' | 'profileUrl'>): string {
-  const normalizedUsername = normalizeUsername(profile.username);
-  return `https://x.com/${normalizedUsername}`;
-}
-
-function formatFollowers(profile: Pick<XUserProfile, 'followersCount' | 'followersText'>): string {
-  if (profile.followersText) return profile.followersText;
-  if (typeof profile.followersCount === 'number') return profile.followersCount.toLocaleString();
-  return '-';
-}
-
-function csvCell(value: unknown): string {
-  const text = value === undefined || value === null ? '' : String(value);
-  return `"${text.replace(/"/g, '""')}"`;
-}
-
-function sqlText(value: unknown): string {
-  if (value === undefined || value === null || value === '') return 'NULL';
-  return `'${String(value).replace(/'/g, "''")}'`;
-}
-
-function exportBlockedUsers(users: BlockedUser[], format: BlockedExportFormat): void {
-  const rows = users.map((user) => ({
-    id: user.id,
-    username: normalizeUsername(user.username),
-    displayName: user.displayName ?? '',
-    bio: user.bio ?? '',
-    followersCount: user.followersCount ?? '',
-    followersText: user.followersText ?? '',
-    profileUrl: getProfileUrl(user),
-    score: user.score ?? '',
-    matchedRules: user.matchedRules?.join('|') ?? '',
-    triggerReason: user.triggerReason ?? '',
-    blockedAt: new Date(user.blockedAt).toISOString(),
-    sourceQueueItemId: user.sourceQueueItemId ?? '',
-  }));
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  let body = '';
-  let mime = 'text/plain;charset=utf-8';
-
-  if (format === 'txt') {
-    body = rows.map((row) => `@${row.username}\t${row.profileUrl}\t${row.blockedAt}`).join('\n');
-  } else if (format === 'csv') {
-    const headers = Object.keys(rows[0] ?? {
-      id: '',
-      username: '',
-      displayName: '',
-      bio: '',
-      followersCount: '',
-      followersText: '',
-      profileUrl: '',
-      score: '',
-      matchedRules: '',
-      triggerReason: '',
-      blockedAt: '',
-      sourceQueueItemId: '',
-    });
-    body = [headers.map(csvCell).join(','), ...rows.map((row) => headers.map((key) => csvCell(row[key as keyof typeof row])).join(','))].join('\n');
-    mime = 'text/csv;charset=utf-8';
-  } else if (format === 'json') {
-    body = JSON.stringify(rows, null, 2);
-    mime = 'application/json;charset=utf-8';
-  } else if (format === 'ndjson') {
-    body = rows.map((row) => JSON.stringify(row)).join('\n');
-    mime = 'application/x-ndjson;charset=utf-8';
-  } else {
-    body = [
-      'CREATE TABLE IF NOT EXISTS xshield_blocked_users (id TEXT PRIMARY KEY, username TEXT, display_name TEXT, bio TEXT, followers_count INTEGER, followers_text TEXT, profile_url TEXT, score INTEGER, matched_rules TEXT, trigger_reason TEXT, blocked_at TEXT, source_queue_item_id TEXT);',
-      ...rows.map(
-        (row) =>
-          `INSERT OR REPLACE INTO xshield_blocked_users (id, username, display_name, bio, followers_count, followers_text, profile_url, score, matched_rules, trigger_reason, blocked_at, source_queue_item_id) VALUES (${sqlText(row.id)}, ${sqlText(row.username)}, ${sqlText(row.displayName)}, ${sqlText(row.bio)}, ${row.followersCount === '' ? 'NULL' : Number(row.followersCount)}, ${sqlText(row.followersText)}, ${sqlText(row.profileUrl)}, ${row.score === '' ? 'NULL' : Number(row.score)}, ${sqlText(row.matchedRules)}, ${sqlText(row.triggerReason)}, ${sqlText(row.blockedAt)}, ${sqlText(row.sourceQueueItemId)});`,
-      ),
-    ].join('\n');
-    mime = 'application/sql;charset=utf-8';
-  }
-
-  const blob = new Blob([body], { type: mime });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `xshield-blocked-users-${stamp}.${format}`;
-  link.click();
-  URL.revokeObjectURL(url);
-}
-
-function getTriggerSummary(
-  profile: Pick<CandidateUser, 'triggerReason' | 'matchedRules' | 'matchedFields'>,
-): string {
-  const rules = profile.triggerReason || profile.matchedRules?.join(', ');
-  const fieldsText = profile.matchedFields?.length ? ` (${profile.matchedFields.join(', ')})` : '';
-  return rules ? `${rules}${fieldsText}` : '-';
-}
-
-function getRuleLines(content: string): string[] {
-  return content
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
-function getFieldLabel(field: MatchField, t: Record<CopyKey, string>): string {
-  if (field === 'username') return t.fieldUsername;
-  if (field === 'displayName') return t.fieldDisplayName;
-  if (field === 'bio') return t.fieldBio;
-  return t.fieldPostContent;
-}
-
-function ProfileIdentity({
-  profile,
-  selectable,
-  selected,
-  onSelected,
-}: {
-  profile: Pick<XUserProfile, 'username' | 'displayName' | 'bio' | 'postContent' | 'profileUrl' | 'avatarUrl'>;
-  selectable?: boolean;
-  selected?: boolean;
-  onSelected?: (selected: boolean) => void;
-}): JSX.Element {
-  const username = normalizeUsername(profile.username);
-
+function Toggle({ checked, onChange }: { checked: boolean; onChange: (value: boolean) => void }) {
   return (
-    <span className={selectable ? 'profile-cell selectable' : 'profile-cell'}>
-      {selectable && (
-        <input
-          aria-label={`Select ${username}`}
-          type="checkbox"
-          checked={Boolean(selected)}
-          onChange={(event) => onSelected?.(event.currentTarget.checked)}
-        />
+    <button
+      type="button"
+      className={`toggle-switch${checked ? ' on' : ''}`}
+      aria-pressed={checked}
+      onClick={() => onChange(!checked)}
+    >
+      <span className="toggle-knob" />
+    </button>
+  );
+}
+
+function KeywordTag({
+  keyword,
+  isAutoBlock,
+  disabled,
+  showCheckbox,
+  checked,
+  onToggleCheck,
+  onDelete,
+}: {
+  keyword: string;
+  isAutoBlock?: boolean;
+  disabled?: boolean;
+  showCheckbox?: boolean;
+  checked?: boolean;
+  onToggleCheck?: () => void;
+  onDelete?: () => void;
+}) {
+  return (
+    <span
+      className={`keyword-tag${isKeywordRegex(keyword) ? ' regex-tag' : ''}${isAutoBlock ? ' is-autoblock' : ''}${
+        disabled ? ' is-disabled' : ''
+      }`}
+    >
+      {showCheckbox && onToggleCheck && (
+        <input type="checkbox" checked={Boolean(checked)} onChange={onToggleCheck} />
       )}
-      {profile.avatarUrl ? (
-        <img className="profile-avatar" src={profile.avatarUrl} alt="" referrerPolicy="no-referrer" />
-      ) : (
-        <span className="profile-avatar avatar-fallback">{username.slice(0, 1).toUpperCase()}</span>
-      )}
-      <span className="profile-copy">
-        <a className="profile-link" href={getProfileUrl(profile)} target="_blank" rel="noreferrer">
-          @{username}
-        </a>
-        <small>{profile.bio || '-'}</small>
-        {profile.displayName && <small>{profile.displayName}</small>}
-        <small>{getProfileUrl(profile)}</small>
+      <span className="keyword-text" title={keyword}>
+        {keyword}
       </span>
+      {onDelete && (
+        <button type="button" className="tag-action" title="remove" onClick={onDelete}>
+          <X size={12} />
+        </button>
+      )}
     </span>
   );
 }
 
-export function Dashboard(): JSX.Element {
-  const [activeView, setActiveView] = useState<ViewId>('overview');
-  const [query, setQuery] = useState('');
-  const [ruleDraft, setRuleDraft] = useState<RuleDraft>(emptyRule);
-  const [settingsDraft, setSettingsDraft] = useState<AppSettings | undefined>();
-  const [selectedSearchIds, setSelectedSearchIds] = useState<string[]>([]);
-  const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([]);
-  const [selectedQueueIds, setSelectedQueueIds] = useState<string[]>([]);
-  const [isRuleRunPending, setIsRuleRunPending] = useState(false);
-  const [ruleRunMessage, setRuleRunMessage] = useState('');
-  const [isQueueRunPending, setIsQueueRunPending] = useState(false);
-  const [queueRunMessage, setQueueRunMessage] = useState('');
-  const [blockedExportFormat, setBlockedExportFormat] = useState<BlockedExportFormat>('csv');
-  const loadAll = useAppStore((state) => state.loadAll);
-  const store = useAppStore();
+function formatTime(ts: number): string {
+  const d = new Date(ts);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) {
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  if (d.getFullYear() === now.getFullYear()) {
+    return `${d.getMonth() + 1}月${d.getDate()}日`;
+  }
+  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
+}
+
+function send(message: Record<string, unknown>): Promise<unknown> {
+  return chrome.runtime.sendMessage(message);
+}
+
+const VIEW_IDS: ViewId[] = ['triggered', 'blockedLog', 'whitelist', 'rules', 'logs', 'settings'];
+const LAST_VIEW_KEY = 'xshieldLastView';
+
+export default function Dashboard() {
+  const [state, setState] = useState<Record<string, unknown>>(() => ({ ...DEFAULTS }));
+  const [view, setView] = useState<ViewId>('triggered');
+  const [status, setStatus] = useState('');
+  const [syncing, setSyncing] = useState(false);
+
+  const language = getLanguage(String(state.language ?? 'system'));
+  const t = dashboardCopy[language];
 
   useEffect(() => {
-    void loadAll();
-  }, [loadAll]);
+    void chrome.storage.local.get(DEFAULTS).then((items) => {
+      setState((current) => ({ ...current, ...items }));
+    });
+    // Restore the last visited page so refreshes never jump elsewhere.
+    void chrome.storage.local.get({ [LAST_VIEW_KEY]: '' }).then((saved) => {
+      const value = saved[LAST_VIEW_KEY] as string;
+      if (VIEW_IDS.includes(value as ViewId)) setView(value as ViewId);
+    });
+  }, []);
 
   useEffect(() => {
-    if (store.settings) setSettingsDraft(store.settings);
-  }, [store.settings]);
+    void chrome.storage.local.set({ [LAST_VIEW_KEY]: view });
+  }, [view]);
 
-  const language = getLanguage(settingsDraft ?? store.settings);
-  const t = copy[language];
-  const helpManual = helpManuals[language];
-  const visibleCandidates = store.candidates.filter((candidate) => candidate.status !== 'deleted');
-  const candidateUsers = visibleCandidates.filter((candidate) => candidate.status === 'candidate');
-  const whitelistedUsers = visibleCandidates.filter((candidate) => candidate.status === 'whitelisted');
-  const queueItems = store.blockQueue.filter((item) => item.status !== 'success');
-  const selectedSearchProfiles = store.searchResults.filter((profile) =>
-    selectedSearchIds.includes(profile.id),
-  );
-  const selectedCandidateUsers = candidateUsers.filter((candidate) =>
-    selectedCandidateIds.includes(candidate.id),
-  );
-  const selectedQueueItems = queueItems.filter((item) => selectedQueueIds.includes(item.id));
-  const recentlyTriggered = candidateUsers.slice(0, 8);
+  useEffect(() => {
+    const onChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area !== 'local') return;
+      setState((current) => {
+        const next = { ...current };
+        for (const key of Object.keys(DEFAULTS)) {
+          if (changes[key]?.newValue !== undefined) {
+            next[key] = changes[key].newValue;
+          }
+        }
+        return next;
+      });
+    };
+    chrome.storage.onChanged.addListener(onChanged);
+    return () => chrome.storage.onChanged.removeListener(onChanged);
+  }, []);
 
-  const metrics = useMemo(
-    () => [
-      { label: t.triggered, value: candidateUsers.length },
-      { label: t.candidates, value: candidateUsers.length },
-      { label: t.rules, value: store.rules.filter((rule) => rule.enabled).length },
-      { label: t.queue, value: queueItems.length },
-      { label: t.blocked, value: store.blockedUsers.length },
-      { label: t.whitelist, value: whitelistedUsers.length },
-    ],
-    [candidateUsers.length, queueItems.length, store.blockedUsers.length, store.rules, t, whitelistedUsers.length],
-  );
+  useEffect(() => {
+    if (status) {
+      const timer = setTimeout(() => setStatus(''), 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [status]);
 
-  const getNavCount = (id: ViewId): string | undefined => {
-    if (id === 'candidates') return String(candidateUsers.length);
-    if (id === 'queue') return String(queueItems.length);
-    if (id === 'blocked') return String(store.blockedUsers.length);
-    if (id === 'whitelist') return String(whitelistedUsers.length);
-    if (id === 'rules') return `${store.rules.filter((rule) => rule.enabled).length}/${store.rules.length}`;
-    if (id === 'logs') return String(store.logs.length);
-    return undefined;
+  const setValue = (key: string, value: unknown): void => {
+    void chrome.storage.local.set({ [key]: value });
   };
 
-  const activeLabel = t[navItems.find((item) => item.id === activeView)?.labelKey ?? 'overview'];
+  const blockedHistory = useMemo(() => (state.blockedHistory as SpamRecord[]) ?? [], [state.blockedHistory]);
+  const autoBlockQueue = useMemo(() => (state.autoBlockQueue as string[]) ?? [], [state.autoBlockQueue]);
+  const blockedUsersOnX = useMemo(() => (state.blockedUsersOnX as string[]) ?? [], [state.blockedUsersOnX]);
+  const whitelist = useMemo(() => (state.whitelist as string[]) ?? [], [state.whitelist]);
+  const cloudKeywords = useMemo(() => parseKeywords(String(state.cloudKeywords ?? '')), [state.cloudKeywords]);
+  const customKeywords = useMemo(() => parseKeywords(String(state.keywords ?? '')), [state.keywords]);
 
-  const saveSettings = (next: AppSettings): void => {
-    setSettingsDraft(next);
-    void store.updateSettings(next);
+  // ---- actions ----
+  const triggerSync = (): void => {
+    setSyncing(true);
+    void send({ action: 'syncNow' })
+      .then((res) => setStatus((res as { success?: boolean })?.success ? t.syncOk : t.syncFailed))
+      .catch(() => setStatus(t.syncFailed))
+      .finally(() => setSyncing(false));
   };
 
-  const runRulesNow = (): void => {
-    setIsRuleRunPending(true);
-    setRuleRunMessage(t.scanningCurrentPage);
-    void store
-      .evaluateCandidatesNow()
-      .then((summary) => {
-        setRuleRunMessage(
-          formatMessage(t.ruleRunResult, {
-            scannedCount: summary.scannedCount,
-            evaluatedCount: summary.evaluatedCount,
-            matchedCount: summary.matchedCount,
-          }),
-        );
-      })
-      .catch((error: unknown) => {
-        setRuleRunMessage(String(error || 'Rule run failed'));
-      })
-      .finally(() => setIsRuleRunPending(false));
-  };
-
-  const formatQueueResult = (result: Awaited<ReturnType<typeof store.runQueueOnce>>): string =>
-    `${result.skipped ? t.queueRunSkipped : t.queueRunDone}: attempted ${result.attemptedCount}, blocked ${result.blockedCount}, skipped ${result.skippedCount}, failed ${result.failedCount}, remaining ${result.remainingQueuedCount}. ${result.message}`;
-
-  const getQueueSettingsHint = (): string => {
-    const settings = store.settings;
-    if (!settings) return '';
-    return t.queueSettingsHint
-      .replace('{batchSize}', String(settings.executorConfig.batchSize))
-      .replace('{intervalMinutes}', String(settings.executorConfig.intervalMinutes))
-      .replace('{mode}', settings.blockAdapterMode === 'real' ? t.real : t.mock);
-  };
-
-  const runQueueNow = (force = false): void => {
-    if (force && !window.confirm(t.manualBlockWarning)) return;
-
-    setIsQueueRunPending(true);
-    setQueueRunMessage(t.runningQueue);
-    void store
-      .runQueueOnce({ force })
-      .then((result) => {
-        setQueueRunMessage(formatQueueResult(result));
-      })
-      .catch((error: unknown) => {
-        setQueueRunMessage(String(error || 'Queue run failed'));
-      })
-      .finally(() => setIsQueueRunPending(false));
-  };
-
-  const submitRule = (): void => {
-    if (!ruleDraft.content.trim() || ruleDraft.fields.length === 0) return;
-    void store.saveRule(ruleDraft);
-    setRuleDraft(emptyRule);
-  };
-
-  const queueProfiles = (profiles: XUserProfile[], runAfterQueue: boolean): void => {
-    void Promise.all(profiles.map((profile) => store.addManualCandidate(profile))).then(async () => {
-      await store.loadAll();
-      const candidatesToQueue = profiles
-        .map((profile) => useAppStore.getState().candidates.find((candidate) => candidate.id === profile.id))
-        .filter((candidate): candidate is CandidateUser => Boolean(candidate));
-      await store.addCandidatesToQueue(candidatesToQueue);
-      setSelectedSearchIds([]);
-      if (runAfterQueue) await store.runQueueOnce();
+  const submitKeywords = (): void => {
+    void send({ action: 'submitKeywords' }).then((res) => {
+      const result = res as { success?: boolean; reason?: string };
+      setStatus(result?.success ? t.submitDone : result?.reason || t.submitFail);
     });
   };
 
-  const queueCandidates = (candidates: CandidateUser[], runAfterQueue: boolean): void => {
-    void store.addCandidatesToQueue(candidates).then(async () => {
-      setSelectedCandidateIds([]);
-      if (runAfterQueue) await store.runQueueOnce();
+  const blockOne = (handle: string): void => {
+    const clean = extractCleanScreenName(handle);
+    if (!clean) return;
+    if (blockedUsersOnX.includes(clean)) {
+      setStatus(t.alreadyBlockedHint);
+      return;
+    }
+    // No optimistic writes here: the background is the single writer for the
+    // ledger. On success it merges the user into `blockedUsersOnX`; trigger
+    // records stay (1.5.1 model), so what the UI shows always matches what
+    // actually happened on X.
+    setStatus(`正在拉黑 @${clean}…`);
+    void send({ action: 'blockUserOnX', screenName: clean }).then((res) => {
+      const result = res as { success?: boolean; reason?: string };
+      setStatus(result?.success ? `已拉黑 @${clean}` : result?.reason ?? '拉黑失败');
     });
   };
 
-  const deleteSelectedCandidates = (): void => {
-    void Promise.all(selectedCandidateUsers.map((candidate) => store.deleteCandidate(candidate.id))).then(() =>
-      setSelectedCandidateIds([]),
-    );
+  /** Undo a mistaken block: unblock on X and add to the whitelist. */
+  const restoreToWhitelist = (handle: string): void => {
+    void send({ action: 'unblockUserOnX', screenName: handle }).then((res) => {
+      const result = res as { success?: boolean; reason?: string };
+      if (result?.success) {
+        setValue('whitelist', Array.from(new Set([...whitelist, handle])));
+        setStatus(`@${handle} ${t.restoredNote}`);
+      } else {
+        setStatus(result?.reason ?? t.unblockFail);
+      }
+    });
   };
 
-  const whitelistSelectedCandidates = (): void => {
-    void Promise.all(selectedCandidateUsers.map((candidate) => store.whitelistCandidate(candidate.id))).then(() =>
-      setSelectedCandidateIds([]),
-    );
+  const unblockOne = (handle: string): void => {
+    void send({ action: 'unblockUserOnX', screenName: handle }).then((res) => {
+      const result = res as { success?: boolean; reason?: string };
+      setStatus(result?.success ? `已解除拉黑 @${handle}` : result?.reason ?? '操作失败');
+    });
   };
+
+  const [confirmBlockAll, setConfirmBlockAll] = useState(false);
+  const confirmTimer = useMemo(() => ({ current: null as ReturnType<typeof setTimeout> | null }), []);
+
+  const blockSelected = (names: string[]): void => {
+    if (names.length === 0) return;
+    if (!confirmBlockAll) {
+      setConfirmBlockAll(true);
+      if (confirmTimer.current) clearTimeout(confirmTimer.current);
+      confirmTimer.current = setTimeout(() => setConfirmBlockAll(false), 3000);
+      return;
+    }
+    if (confirmTimer.current) clearTimeout(confirmTimer.current);
+    setConfirmBlockAll(false);
+    const queuedNamesSet = new Set(names);
+    void send({ action: 'blockAllHistoryUsers', users: names }).then(() => {
+      // Card info for the queue page.
+      const info = { ...((state.queueInfo as Record<string, { displayName?: string; text?: string }>) ?? {}) };
+      for (const record of selectedRecords) {
+        const name = extractCleanScreenName(record.user ?? '');
+        if (name && queuedNamesSet.has(name)) {
+          info[name] = { displayName: record.displayName, text: record.text };
+        }
+      }
+      setValue('queueInfo', info);
+      // Records stay on this page after enqueueing (1.5.1 model): a block
+      // success never deletes history — the row simply flips to "已拉黑"
+      // once the ledger in storage updates.
+      setStatus(t.queuedNote.replace('{count}', String(names.length)));
+      setSelectedIds([]);
+    });
+  };
+
+  const removeRecord = (id: string, time: number): void => {
+    void send({ action: 'removeSpamRecord', id, time });
+  };
+
+  const addWhitelistFromRecord = (handle: string): void => {
+    const clean = extractCleanScreenName(handle);
+    if (!clean) return;
+    setValue('whitelist', Array.from(new Set([...whitelist, clean])));
+    setStatus(`@${clean} → ${t.whitelist}`);
+  };
+
+  const addWhitelist = (): void => {
+    const input = (document.getElementById('whitelist-input') as HTMLInputElement | null)?.value ?? '';
+    const clean = extractCleanScreenName(input);
+    if (!clean) return;
+    setValue('whitelist', Array.from(new Set([...whitelist, clean])));
+    const el = document.getElementById('whitelist-input') as HTMLInputElement | null;
+    if (el) el.value = '';
+  };
+
+  // keyword actions
+  const addKeyword = (): void => {
+    const input = (document.getElementById('new-keyword') as HTMLInputElement | null)?.value ?? '';
+    const parsed = parseKeywords(input);
+    if (parsed.length === 0) return;
+    setValue('keywords', Array.from(new Set([...customKeywords, ...parsed])).join('\n'));
+    const el = document.getElementById('new-keyword') as HTMLInputElement | null;
+    if (el) el.value = '';
+  };
+
+  const deleteKeyword = (keyword: string): void => {
+    setValue('keywords', customKeywords.filter((k) => k !== keyword).join('\n'));
+    setValue('autoBlockKeywords', ((state.autoBlockKeywords as string[]) ?? []).filter((k) => k !== keyword));
+  };
+
+  const toggleAutoBlockKeyword = (keyword: string, enable: boolean): void => {
+    const next = new Set((state.autoBlockKeywords as string[]) ?? []);
+    if (enable) next.add(keyword);
+    else next.delete(keyword);
+    setValue('autoBlockKeywords', Array.from(next));
+  };
+
+  const toggleDisabledCloud = (keyword: string, disable: boolean): void => {
+    const next = new Set((state.disabledCloudKeywords as string[]) ?? []);
+    if (disable) next.add(keyword);
+    else next.delete(keyword);
+    setValue('disabledCloudKeywords', Array.from(next));
+  };
+
+  const exportKeywords = (): void => {
+    const blob = new Blob([String(state.keywords ?? '')], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'xshield-keywords.txt';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importKeywords = (): void => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.txt,.json';
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const text = String(reader.result ?? '');
+        let parsed = parseKeywords(text);
+        if (parsed.length === 0) {
+          try {
+            parsed = parseKeywords((JSON.parse(text) as { keywords?: string }).keywords ?? '');
+          } catch {
+            // keep empty
+          }
+        }
+        if (parsed.length > 0) setValue('keywords', Array.from(new Set([...customKeywords, ...parsed])).join('\n'));
+      };
+      reader.readAsText(file);
+    };
+    input.click();
+  };
+
+  // logs page state
+  const logs = (state.xshieldLogs as XLogEntry[]) ?? [];
+  const [logLevel, setLogLevel] = useState('all');
+  const [logCategory, setLogCategory] = useState('all');
+  const [logQuery, setLogQuery] = useState('');
+  const [logPage, setLogPage] = useState(0);
+  const LOG_PAGE_SIZE = 50;
+  const logLevels = ['all', 'info', 'warn', 'error'];
+  const logCategories = ['all', 'block', 'sync', 'trigger', 'settings', 'system'];
+  const filteredLogs = logs.filter((entry) => {
+    if (logLevel !== 'all' && entry.level !== logLevel) return false;
+    if (logCategory !== 'all' && entry.category !== logCategory) return false;
+    if (logQuery && !entry.message.toLowerCase().includes(logQuery.toLowerCase())) return false;
+    return true;
+  });
+
+  // rules page state
+  const [cloudQuery, setCloudQuery] = useState('');
+  const [editingAutoBlock, setEditingAutoBlock] = useState(false);
+  const visibleCloudKeywords = cloudKeywords.filter((k) => (cloudQuery ? k.includes(cloudQuery.toLowerCase()) : true));
+
+  // triggered page state
+  const [triggerQuery, setTriggerQuery] = useState('');
+  const [triggerFilter, setTriggerFilter] = useState('all');
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  // `__blocked_on_x__` is the 1.5.1 pseudo-reason: filter for users whose
+  // trigger records exist but who are already in the blocked ledger.
+  const BLOCKED_FILTER = '__blocked_on_x__';
+  const triggerReasons = ['all', '内容屏蔽', '昵称屏蔽', '表情屏蔽', '特殊字符屏蔽', 'Grok屏蔽', BLOCKED_FILTER];
+  const filterLabel = (reason: string): string => (reason === BLOCKED_FILTER ? '已拉黑' : reason);
+
+  const filteredHistory = blockedHistory.filter((item) => {
+    const handle = extractCleanScreenName(item.user ?? '');
+    if (triggerFilter === BLOCKED_FILTER) {
+      if (!handle || !blockedUsersOnX.includes(handle)) return false;
+    } else if (triggerFilter !== 'all') {
+      if (item.reason !== triggerFilter) return false;
+      // Already-blocked users stay visible under their reason filter (the
+      // row shows the 已拉黑 state), matching the 1.5.1 list behaviour.
+    }
+    if (triggerQuery && !`${item.user} ${item.text} ${item.displayName}`.toLowerCase().includes(triggerQuery.toLowerCase())) {
+      return false;
+    }
+    return true;
+  });
+  const selectedRecords = filteredHistory.filter((item) => selectedIds.includes(`${item.id}:${item.time}`));
+  const selectedNames = Array.from(
+    new Set(selectedRecords.map((item) => extractCleanScreenName(item.user ?? '')).filter(Boolean)),
+  );
+
+  const navItems: Array<{ id: ViewId; label: string; icon: ReactNode }> = [
+    { id: 'triggered', label: t.triggered, icon: <ListChecks size={18} /> },
+    { id: 'blockedLog', label: t.blockedLog, icon: <ShieldCheck size={18} /> },
+    { id: 'whitelist', label: t.whitelist, icon: <CheckCircle2 size={18} /> },
+    { id: 'rules', label: t.rulesSync, icon: <ScrollText size={18} /> },
+    { id: 'settings', label: t.settings, icon: <SettingsIcon size={18} /> },
+  ];
 
   return (
     <main className="app-shell">
@@ -488,25 +450,20 @@ export function Dashboard(): JSX.Element {
         <div className="brand">
           <img src={chrome.runtime.getURL('icons/xshield-logo.svg')} alt="" />
           <span>XShield</span>
+          <span className={`status-dot${state.enabled ? ' on' : ''}`} />
         </div>
-        <nav className="nav-list" aria-label="Dashboard sections">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const count = getNavCount(item.id);
-            return (
-              <button
-                key={item.id}
-                className={activeView === item.id ? 'nav-item active' : 'nav-item'}
-                type="button"
-                title={t[item.labelKey]}
-                onClick={() => setActiveView(item.id)}
-              >
-                <Icon aria-hidden />
-                <span>{t[item.labelKey]}</span>
-                {count && <strong>{count}</strong>}
-              </button>
-            );
-          })}
+        <nav className="nav-list" aria-label="Sections">
+          {navItems.map((item) => (
+            <button
+              key={item.id}
+              className={view === item.id ? 'nav-item active' : 'nav-item'}
+              type="button"
+              onClick={() => setView(item.id)}
+            >
+              {item.icon}
+              <span>{item.label}</span>
+            </button>
+          ))}
         </nav>
       </aside>
 
@@ -514,900 +471,443 @@ export function Dashboard(): JSX.Element {
         <header className="topbar">
           <div>
             <p className="eyebrow">{t.appSubtitle}</p>
-            <h1>{activeLabel}</h1>
+            <h1>{navItems.find((item) => item.id === view)?.label ?? ''}</h1>
           </div>
-          <button
-            className="icon-button"
-            type="button"
-            title="Refresh data"
-            onClick={() => void store.loadAll()}
-          >
-            <RefreshCw aria-hidden />
-          </button>
+          {status && <span className="toolbar-status status-flash">{status}</span>}
         </header>
 
-        {activeView === 'overview' && (
-          <div className="stack">
-            <section className="metric-grid">
-              {metrics.map((metric) => (
-                <article className="metric-card" key={metric.label}>
-                  <span>{metric.label}</span>
-                  <strong>{metric.value}</strong>
-                </article>
-              ))}
-            </section>
-            <DataPanel title={t.recentTriggers} meta={`${recentlyTriggered.length} / ${candidateUsers.length}`}>
-              <div className="compact-list">
-                {recentlyTriggered.map((candidate) => (
-                  <ProfileEvidenceRow key={candidate.id} profile={candidate} t={t} />
-                ))}
-                {recentlyTriggered.length === 0 && <p className="empty-state">{t.noCandidates}</p>}
-              </div>
-            </DataPanel>
-            <DataPanel title={t.manualSearch} meta={t.searchScope}>
-              <div className="form-grid">
-                <label>
-                  {t.keyword}
-                  <input value={query} onChange={(event) => setQuery(event.currentTarget.value)} />
-                </label>
-                <button
-                  className="solid-button"
-                  type="button"
-                  onClick={() => {
-                    setSelectedSearchIds([]);
-                    void store.searchUsers(query);
-                  }}
-                >
-                  <Search aria-hidden />
-                  {t.search}
-                </button>
-              </div>
-              <BulkToolbar
-                allIds={store.searchResults.map((profile) => profile.id)}
-                selectedIds={selectedSearchIds}
-                selectedCount={selectedSearchProfiles.length}
-                t={t}
-                onSelectAll={setSelectedSearchIds}
-                onQueue={() => queueProfiles(selectedSearchProfiles, false)}
-                onQueueAndRun={() => queueProfiles(selectedSearchProfiles, true)}
-              />
-              <div className="compact-list">
-                {store.searchResults.map((profile) => (
-                  <SelectableProfileRow
-                    key={profile.id}
-                    profile={profile}
-                    selected={selectedSearchIds.includes(profile.id)}
-                    onSelected={(selected) =>
-                      setSelectedSearchIds((current) =>
-                        selected
-                          ? Array.from(new Set([...current, profile.id]))
-                          : current.filter((id) => id !== profile.id),
-                      )
-                    }
-                    onAdd={() => void store.addManualCandidate(profile)}
-                  />
-                ))}
-                {store.searchResults.length === 0 && <p className="empty-state">{t.noSearchResults}</p>}
-              </div>
-            </DataPanel>
-          </div>
-        )}
-
-        {activeView === 'candidates' && (
-          <DataPanel title={t.candidates} meta={`${selectedCandidateUsers.length} / ${candidateUsers.length}`}>
-            <BulkToolbar
-              allIds={candidateUsers.map((candidate) => candidate.id)}
-              selectedIds={selectedCandidateIds}
-              selectedCount={selectedCandidateUsers.length}
-              t={t}
-              onSelectAll={setSelectedCandidateIds}
-              onQueue={() => queueCandidates(selectedCandidateUsers, false)}
-              onDelete={deleteSelectedCandidates}
-              onWhitelist={whitelistSelectedCandidates}
-            />
-            <CandidateTable
-              candidates={candidateUsers}
-              selectedIds={selectedCandidateIds}
-              t={t}
-              onToggleSelected={(id, selected) =>
-                setSelectedCandidateIds((current) =>
-                  selected
-                    ? Array.from(new Set([...current, id]))
-                    : current.filter((candidateId) => candidateId !== id),
-                )
-              }
-              onQueue={store.addCandidateToQueue}
-              onWhitelist={store.whitelistCandidate}
-              onFalsePositive={store.markFalsePositive}
-              onDelete={store.deleteCandidate}
-            />
-          </DataPanel>
-        )}
-
-        {activeView === 'rules' && settingsDraft && (
-          <div className="stack">
-            <DataPanel
-              title={t.ruleMode}
-              meta={`${settingsDraft.ruleExecutionMode === 'automatic' ? t.automatic : t.manual} / ${
-                settingsDraft.rulesRunning ? t.start : t.stop
-              }`}
-            >
-              <div className="toolbar">
-                <select
-                  className="toolbar-select"
-                  value={settingsDraft.ruleExecutionMode}
-                  onChange={(event) =>
-                    saveSettings({
-                      ...settingsDraft,
-                      ruleExecutionMode: event.currentTarget.value as RuleExecutionMode,
-                    })
-                  }
-                >
-                  <option value="automatic">{t.automatic}</option>
-                  <option value="manual">{t.manual}</option>
-                </select>
-                <button
-                  className={settingsDraft.rulesRunning ? 'plain-button' : 'solid-button'}
-                  type="button"
-                  onClick={() => saveSettings({ ...settingsDraft, rulesRunning: !settingsDraft.rulesRunning })}
-                >
-                  {settingsDraft.rulesRunning ? <Pause aria-hidden /> : <Play aria-hidden />}
-                  {settingsDraft.rulesRunning ? t.stop : t.start}
-                </button>
-                <button
-                  className="solid-button"
-                  type="button"
-                  disabled={isRuleRunPending}
-                  onClick={runRulesNow}
-                >
-                  {isRuleRunPending ? <Pause aria-hidden /> : <Play aria-hidden />}
-                  {isRuleRunPending ? t.running : t.evaluateNow}
-                </button>
-                {ruleRunMessage && <span className="toolbar-status">{ruleRunMessage}</span>}
-              </div>
-            </DataPanel>
-
-            {!ruleDraft.id && (
-              <DataPanel title={t.newRule} meta={t.onePerLine}>
-                <RuleEditor
-                  draft={ruleDraft}
-                  t={t}
-                  onChange={setRuleDraft}
-                  onSave={submitRule}
-                  onCancel={() => setRuleDraft(emptyRule)}
-                />
-              </DataPanel>
-            )}
-
-            <DataPanel title={t.rules} meta={`${store.rules.length}`}>
-              <div className="rules-list">
-                {store.rules.map((rule) => (
-                  <article className="rule-item" key={rule.id}>
-                    {ruleDraft.id === rule.id ? (
-                      <RuleEditor
-                        draft={ruleDraft}
-                        t={t}
-                        onChange={setRuleDraft}
-                        onSave={submitRule}
-                        onCancel={() => setRuleDraft(emptyRule)}
-                        onDelete={() => {
-                          void store.deleteRule(rule.id).then(() => setRuleDraft(emptyRule));
-                        }}
-                      />
-                    ) : (
-                      <>
-                        <div>
-                          <strong>
-                            {rule.type} / {getRuleLines(rule.content).length} {t.ruleLines}
-                          </strong>
-                          <small>
-                            score {rule.score} / {rule.fields.map((field) => getFieldLabel(field, t)).join(', ')}
-                          </small>
-                        </div>
-                        <div className="row-actions">
-                          <label className="switch" title="Enable rule">
-                            <input
-                              type="checkbox"
-                              checked={rule.enabled}
-                              onChange={(event) => void store.toggleRule(rule.id, event.currentTarget.checked)}
-                            />
-                            <span />
-                          </label>
-                          <button type="button" title={t.editRule} onClick={() => setRuleDraft(rule)}>
-                            <SlidersHorizontal aria-hidden />
-                          </button>
-                          <button type="button" title="Delete rule" onClick={() => void store.deleteRule(rule.id)}>
-                            <Trash2 aria-hidden />
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </article>
-                ))}
-              </div>
-            </DataPanel>
-          </div>
-        )}
-
-        {activeView === 'queue' && (
-          <DataPanel
-            title={t.queue}
-            meta={`${selectedQueueItems.length} / ${queueItems.length} | ${t.blockMode}: ${
-              store.settings?.blockAdapterMode === 'real' ? t.real : t.mock
-            }`}
-          >
+        {view === 'triggered' && (
+          <DataPanel title={t.triggered} meta={`${selectedRecords.length} / ${filteredHistory.length}`}>
             <div className="toolbar">
-              <label className="check-label">
+              <label className="check-inline">
                 <input
                   type="checkbox"
-                  checked={queueItems.length > 0 && selectedQueueIds.length === queueItems.length}
+                  checked={filteredHistory.length > 0 && selectedIds.length === filteredHistory.length}
                   onChange={(event) =>
-                    setSelectedQueueIds(event.currentTarget.checked ? queueItems.map((item) => item.id) : [])
+                    setSelectedIds(
+                      event.currentTarget.checked
+                        ? filteredHistory.map((item) => `${item.id}:${item.time}`)
+                        : [],
+                    )
                   }
                 />
                 {t.selectAll}
               </label>
-              <button
-                className="solid-button"
-                type="button"
-                disabled={isQueueRunPending}
-                title={getQueueSettingsHint()}
-                onClick={() => runQueueNow(false)}
-              >
-                {isQueueRunPending ? <Pause aria-hidden /> : <Play aria-hidden />}
-                {isQueueRunPending ? t.running : t.runBatch}
-              </button>
-              <button
-                className="plain-button"
-                type="button"
-                disabled={isQueueRunPending}
-                title={t.manualBlockWarning}
-                onClick={() => runQueueNow(true)}
-              >
-                <Play aria-hidden />
-                {t.manualBlockNow}
-              </button>
-              {store.settings && <span className="toolbar-status">{getQueueSettingsHint()}</span>}
-              {queueRunMessage && <span className="toolbar-status">{queueRunMessage}</span>}
-              <button
-                className="plain-button"
-                type="button"
-                onClick={() => void store.setQueuePaused(!store.settings?.queuePaused)}
-              >
-                {store.settings?.queuePaused ? <Play aria-hidden /> : <Pause aria-hidden />}
-                {store.settings?.queuePaused ? t.start : t.stop}
-              </button>
-              <button
-                className="plain-button"
-                type="button"
-                disabled={selectedQueueItems.length === 0}
-                onClick={() => {
-                  void store.removeQueueItems(selectedQueueIds).then(() => setSelectedQueueIds([]));
+              <input
+                placeholder={t.search}
+                value={triggerQuery}
+                onChange={(e) => {
+                  setTriggerQuery(e.currentTarget.value);
+                  setSelectedIds([]);
                 }}
-              >
-                <Trash2 aria-hidden />
-                {t.deleteSelected}
-              </button>
-              <button
-                className="plain-button"
-                type="button"
-                disabled={selectedQueueItems.length === 0}
-                onClick={() => {
-                  void store.whitelistQueueItems(selectedQueueIds).then(() => setSelectedQueueIds([]));
-                }}
-              >
-                <CheckCircle2 aria-hidden />
-                {t.whitelistSelected}
-              </button>
-            </div>
-            <QueueTable
-              items={queueItems}
-              selectedIds={selectedQueueIds}
-              t={t}
-              onToggleSelected={(id, selected) =>
-                setSelectedQueueIds((current) =>
-                  selected ? Array.from(new Set([...current, id])) : current.filter((itemId) => itemId !== id),
-                )
-              }
-              onRemove={store.removeQueueItem}
-            />
-          </DataPanel>
-        )}
-
-        {activeView === 'blocked' && (
-          <DataPanel title={t.blocked} meta={`${store.blockedUsers.length}`}>
-            <div className="toolbar">
-              <label className="toolbar-select">
-                <span>{t.exportFormat}</span>
-                <select
-                  value={blockedExportFormat}
-                  onChange={(event) => setBlockedExportFormat(event.currentTarget.value as BlockedExportFormat)}
-                >
-                  <option value="csv">CSV</option>
-                  <option value="json">JSON</option>
-                  <option value="ndjson">NDJSON</option>
-                  <option value="sql">SQL</option>
-                  <option value="txt">TXT</option>
-                </select>
-              </label>
-              <button
-                className="solid-button"
-                type="button"
-                disabled={store.blockedUsers.length === 0}
-                onClick={() => exportBlockedUsers(store.blockedUsers, blockedExportFormat)}
-              >
-                <Download aria-hidden />
-                {t.exportBlocked}
-              </button>
-            </div>
-            <div className="compact-list">
-              {store.blockedUsers.map((user) => (
-                <div className="list-row evidence-row" key={user.id}>
-                  <span className="profile-stack">
-                    <ProfileIdentity profile={user} />
-                    <small>
-                      {t.followers}: {formatFollowers(user)} / {new Date(user.blockedAt).toLocaleString()}
-                    </small>
-                  </span>
-                  <span className="mode-badge">{user.score ?? '-'}</span>
-                </div>
-              ))}
-              {store.blockedUsers.length === 0 && <p className="empty-state">{t.queueEmpty}</p>}
-            </div>
-          </DataPanel>
-        )}
-
-        {activeView === 'whitelist' && (
-          <DataPanel title={t.whitelist} meta={`${whitelistedUsers.length}`}>
-            <div className="compact-list">
-              {whitelistedUsers.map((candidate) => (
-                <div className="list-row" key={candidate.id}>
-                  <span>
-                    <strong>@{candidate.username}</strong>
-                    <small>{candidate.note || candidate.bio || candidate.profileUrl}</small>
-                  </span>
-                  <button
-                    type="button"
-                    title={t.restore}
-                    onClick={() => void store.restoreCandidate(candidate.id)}
-                  >
-                    <RotateCcw aria-hidden />
-                  </button>
-                </div>
-              ))}
-              {whitelistedUsers.length === 0 && <p className="empty-state">{t.whitelistEmpty}</p>}
-            </div>
-          </DataPanel>
-        )}
-
-        {activeView === 'logs' && (
-          <DataPanel title={t.logs} meta={`${store.logs.length}`}>
-            <div className="toolbar">
-              <button className="plain-button" type="button" onClick={() => void store.clearLogs()}>
-                <Trash2 aria-hidden />
-                {t.clearLogs}
-              </button>
-            </div>
-            <div className="compact-list">
-              {store.logs.map((log) => (
-                <div className="list-row" key={log.id}>
-                  <span>
-                    <strong>{log.message}</strong>
-                    <small>
-                      {log.level} / {log.context || 'xshield'} / {new Date(log.createdAt).toLocaleString()}
-                    </small>
-                  </span>
-                </div>
-              ))}
-              {store.logs.length === 0 && <p className="empty-state">{t.logsEmpty}</p>}
-            </div>
-          </DataPanel>
-        )}
-
-        {activeView === 'settings' && settingsDraft && (
-          <DataPanel title={t.settings} meta={`${t.language} / ${t.ruleMode} / ${t.blockMode}`}>
-            <div className="settings-grid">
-              <label>
-                {t.language}
-                <select
-                  value={settingsDraft.language}
-                  onChange={(event) =>
-                    setSettingsDraft({ ...settingsDraft, language: event.currentTarget.value as LanguageMode })
-                  }
-                >
-                  <option value="system">{t.system}</option>
-                  <option value="zh-CN">{t.languageSimplifiedChinese}</option>
-                  <option value="zh-TW">{t.languageTraditionalChinese}</option>
-                  <option value="ja">{t.languageJapanese}</option>
-                  <option value="ko">{t.languageKorean}</option>
-                  <option value="fr">{t.languageFrench}</option>
-                  <option value="en">{t.languageEnglish}</option>
-                </select>
-              </label>
-              <label>
-                {t.ruleMode}
-                <select
-                  value={settingsDraft.ruleExecutionMode}
-                  onChange={(event) =>
-                    setSettingsDraft({
-                      ...settingsDraft,
-                      ruleExecutionMode: event.currentTarget.value as RuleExecutionMode,
-                    })
-                  }
-                >
-                  <option value="automatic">{t.automatic}</option>
-                  <option value="manual">{t.manual}</option>
-                </select>
-              </label>
-              <label>
-                {t.blockMode}
-                <select
-                  value={settingsDraft.blockAdapterMode}
-                  onChange={(event) =>
-                    setSettingsDraft({
-                      ...settingsDraft,
-                      blockAdapterMode: event.currentTarget.value as BlockAdapterMode,
-                    })
-                  }
-                >
-                  <option value="mock">{t.mock}</option>
-                  <option value="real">{t.real}</option>
-                </select>
-              </label>
-              <NumberField
-                label={t.scoreThreshold}
-                value={settingsDraft.scoreThreshold}
-                onChange={(value) => setSettingsDraft({ ...settingsDraft, scoreThreshold: value })}
               />
-              <NumberField
-                label={t.batchSize}
-                value={settingsDraft.executorConfig.batchSize}
-                onChange={(value) =>
-                  setSettingsDraft({
-                    ...settingsDraft,
-                    executorConfig: { ...settingsDraft.executorConfig, batchSize: value },
-                  })
-                }
-              />
-              <NumberField
-                label={t.intervalMinutes}
-                value={settingsDraft.executorConfig.intervalMinutes}
-                onChange={(value) =>
-                  setSettingsDraft({
-                    ...settingsDraft,
-                    executorConfig: { ...settingsDraft.executorConfig, intervalMinutes: value },
-                  })
-                }
-              />
-              <NumberField
-                label={t.jitterSeconds}
-                value={settingsDraft.executorConfig.jitterSeconds}
-                onChange={(value) =>
-                  setSettingsDraft({
-                    ...settingsDraft,
-                    executorConfig: { ...settingsDraft.executorConfig, jitterSeconds: value },
-                  })
-                }
-              />
-              <NumberField
-                label={t.maxRetries}
-                value={settingsDraft.executorConfig.maxRetries}
-                onChange={(value) =>
-                  setSettingsDraft({
-                    ...settingsDraft,
-                    executorConfig: { ...settingsDraft.executorConfig, maxRetries: value },
-                  })
-                }
-              />
-              <NumberField
-                label={t.cooldownMinutes}
-                value={settingsDraft.executorConfig.cooldownMinutesAfterFailure}
-                onChange={(value) =>
-                  setSettingsDraft({
-                    ...settingsDraft,
-                    executorConfig: {
-                      ...settingsDraft.executorConfig,
-                      cooldownMinutesAfterFailure: value,
-                    },
-                  })
-                }
-              />
-            </div>
-            <div className="form-actions">
-              <button className="solid-button" type="button" onClick={() => void store.updateSettings(settingsDraft)}>
-                <Settings aria-hidden />
-                {t.saveSettings}
-              </button>
-              <button
-                className="plain-button"
-                type="button"
-                onClick={() =>
-                  setSettingsDraft({
-                    ...settingsDraft,
-                    scoreThreshold: DEFAULT_SCORE_THRESHOLD,
-                    executorConfig: DEFAULT_BLOCK_EXECUTOR_CONFIG,
-                  })
-                }
-              >
-                {t.resetDraft}
-              </button>
-            </div>
-          </DataPanel>
-        )}
-
-        {activeView === 'help' && (
-          <DataPanel title={helpManual.title} meta={PROJECT_INFO.name}>
-            <div className="help-manual">
-              <p className="help-intro">{helpManual.intro}</p>
-              <div className="help-grid">
-                {helpManual.sections.map((section) => (
-                  <article className="help-section" key={section.title}>
-                    <h3>{section.title}</h3>
-                    <ul>
-                      {section.body.map((item) => (
-                        <li key={item}>{item}</li>
-                      ))}
-                    </ul>
-                  </article>
+              <select value={triggerFilter} onChange={(e) => { setTriggerFilter(e.currentTarget.value); setSelectedIds([]); }}>
+                {triggerReasons.map((reason) => (
+                  <option key={reason} value={reason}>{filterLabel(reason)}</option>
                 ))}
-              </div>
+              </select>
+              <button
+                className="solid-button danger"
+                type="button"
+                disabled={selectedNames.length === 0}
+                onClick={() => blockSelected(selectedNames)}
+              >
+                <Ban size={16} />
+                {confirmBlockAll
+                  ? t.confirmBlock.replace('{count}', String(selectedNames.length))
+                  : `${t.blockAll}(${selectedNames.length})`}
+              </button>
+            </div>
+            <p className="hint">{t.blockHere}</p>
+            <div className="card-grid">
+              {filteredHistory.map((item) => {
+                const handle = extractCleanScreenName(item.user ?? '');
+                const key = `${item.id}:${item.time}`;
+                const isBlocked = handle ? blockedUsersOnX.includes(handle) : false;
+                return (
+                  <div className="profile-card trigger-card" key={key}>
+                    <label className="check-inline card-check">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(key)}
+                        onChange={(e) =>
+                          setSelectedIds((current) =>
+                            e.currentTarget.checked ? [...current, key] : current.filter((id) => id !== key),
+                          )
+                        }
+                      />
+                    </label>
+                    <div
+                      className="profile-card-head"
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => handle && window.open(`https://x.com/${handle}`, '_blank')}
+                    >
+                      <span className="history-display">{item.displayName || item.user || 'unknown'}</span>
+                      {handle && <span className="history-handle">@{handle}</span>}
+                      <span className="history-reason">{item.reason ? `[${item.reason}]` : ''}</span>
+                      <small>{formatTime(item.time)}</small>
+                      <ExternalLink size={13} className="profile-card-open" />
+                    </div>
+                    {item.text ? <p className="profile-card-text">{item.text}</p> : null}
+                    <span className="row-actions profile-card-actions">
+                      {handle && (
+                        <button
+                          type="button"
+                          className={isBlocked ? 'btn-block-x success' : 'btn-block-x'}
+                          onClick={() => blockOne(handle)}
+                        >
+                          {isBlocked ? t.blocked : t.block}
+                        </button>
+                      )}
+                      {handle && (
+                        <button type="button" title={t.whitelist} onClick={() => addWhitelistFromRecord(handle)}>
+                          <CheckCircle2 size={16} />
+                        </button>
+                      )}
+                      <button type="button" title={t.remove} onClick={() => removeRecord(item.id, item.time)}>
+                        <Trash2 size={16} />
+                      </button>
+                    </span>
+                  </div>
+                );
+              })}
+              {filteredHistory.length === 0 && <p className="empty-state">{t.historyEmpty}</p>}
             </div>
           </DataPanel>
         )}
-        <footer className="app-footer">
-          <span>
-            {PROJECT_INFO.name} v{PROJECT_INFO.version} / {PROJECT_INFO.license}
-          </span>
-          <span>{PROJECT_INFO.copyright}</span>
-          <a href={PROJECT_INFO.issuesUrl} target="_blank" rel="noreferrer">
-            Feedback
-          </a>
-        </footer>
+
+        {view === 'blockedLog' && (
+          <div className="stack">
+            <DataPanel
+              title={t.blockedLog}
+              meta={`${t.autoBlockToday}: ${String(state.autoBlockToday ?? 0)} · ${t.queueRemaining}: ${autoBlockQueue.length}${
+                Number(state.autoBlockPausedUntil ?? 0) > Date.now() ? ` · ${t.paused}` : ''
+              }`}
+            >
+              <div className="metric-grid small">
+                <article className="metric-card">
+                  <span>{t.autoBlockToday}</span>
+                  <strong>{String(state.autoBlockToday ?? 0)}</strong>
+                </article>
+                <article className="metric-card">
+                  <span>{t.queueRemaining}</span>
+                  <strong>{autoBlockQueue.length}</strong>
+                </article>
+                <article className="metric-card">
+                  <span>{t.blockedUsers}</span>
+                  <strong>{blockedUsersOnX.length}</strong>
+                </article>
+              </div>
+              <p className="hint">{t.cloudSourceHint}</p>
+            <p className="hint">{t.autoBlockNote}</p>
+              <div className="card-grid">
+                {blockedUsersOnX.slice(-200).reverse().map((name) => {
+                  const info = ((state.queueInfo as Record<string, { displayName?: string; text?: string }>) ?? {})[name];
+                  return (
+                    <div className="profile-card" key={name}>
+                      <div
+                        className="profile-card-head"
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => window.open(`https://x.com/${name}`, '_blank')}
+                      >
+                        <span className="history-display">{info?.displayName || name}</span>
+                        <span className="history-handle">@{name}</span>
+                        <ExternalLink size={13} className="profile-card-open" />
+                      </div>
+                      {info?.text ? <p className="profile-card-text">{info.text}</p> : null}
+                      <span className="row-actions profile-card-actions">
+                        <button
+                          type="button"
+                          className="btn-whitelist"
+                          title={t.restoreWhitelist}
+                          onClick={() => restoreToWhitelist(name)}
+                        >
+                          <CheckCircle2 size={14} /> {t.whitelist}
+                        </button>
+                        <button type="button" className="btn-block-x success" onClick={() => unblockOne(name)}>
+                          {t.unblock}
+                        </button>
+                      </span>
+                    </div>
+                  );
+                })}
+                {blockedUsersOnX.length === 0 && <p className="empty-state">{t.blockedEmpty}</p>}
+              </div>
+            </DataPanel>
+
+            <DataPanel title={t.queueTitle} meta={`${autoBlockQueue.length}`}>
+              <div className="card-grid">
+                {autoBlockQueue.map((name) => {
+                  const info = ((state.queueInfo as Record<string, { displayName?: string; text?: string }>) ?? {})[name];
+                  return (
+                    <div className="profile-card" key={name} role="button" tabIndex={0} onClick={() => window.open(`https://x.com/${name}`, '_blank')}>
+                      <div className="profile-card-head">
+                        <span className="history-display">{info?.displayName || name}</span>
+                        <span className="history-handle">@{name}</span>
+                        <ExternalLink size={13} className="profile-card-open" />
+                      </div>
+                      {info?.text ? <p className="profile-card-text">{info.text}</p> : null}
+                    </div>
+                  );
+                })}
+                {autoBlockQueue.length === 0 && <p className="empty-state">{t.queueEmpty}</p>}
+              </div>
+            </DataPanel>
+          </div>
+        )}
+
+        {view === 'whitelist' && (
+          <DataPanel title={t.whitelist} meta={`${whitelist.length}`}>
+            <div className="form-grid inline">
+              <input id="whitelist-input" placeholder={t.whitelistPlaceholder} onKeyDown={(e) => e.key === 'Enter' && addWhitelist()} />
+              <button className="solid-button" type="button" onClick={addWhitelist}>
+                {t.whitelistAdd}
+              </button>
+            </div>
+            <div className="compact-list">
+              {whitelist.map((name) => (
+                <div className="list-row" key={name}>
+                  <span className="history-handle">@{name}</span>
+                  <span className="row-actions">
+                    <button type="button" title={t.remove} onClick={() => setValue('whitelist', whitelist.filter((w) => w !== name))}>
+                      <Trash2 size={16} />
+                    </button>
+                  </span>
+                </div>
+              ))}
+              {whitelist.length === 0 && <p className="empty-state">{t.whitelistEmpty}</p>}
+            </div>
+          </DataPanel>
+        )}
+
+        {view === 'rules' && (
+          <div className="stack">
+            <DataPanel title={t.cloudLibrary} meta={`${cloudKeywords.length}`}>
+              <div className="form-grid inline">
+                <button className="solid-button" type="button" disabled={syncing} onClick={triggerSync}>
+                  <Download size={16} className={syncing ? 'spin' : ''} /> {syncing ? t.syncing : t.syncNow}
+                </button>
+                <span className="toolbar-status">
+                  {Number(state.lastSyncTime ?? 0) > 0 ? formatTime(Number(state.lastSyncTime)) : ''}
+                  {state.syncStatus === 'ok' ? ` · ${t.syncOk}` : ''}
+                  {state.syncStatus === 'error' ? ` · ${t.syncFailed}` : ''}
+                </span>
+              </div>
+              <div className="form-grid inline">
+                <input
+                  placeholder={t.search}
+                  value={cloudQuery}
+                  onChange={(e) => setCloudQuery(e.currentTarget.value)}
+                />
+                <button className="plain-button" type="button" onClick={() => setEditingAutoBlock(!editingAutoBlock)}>
+                  {editingAutoBlock ? t.save : t.autoBlockKeywordsLabel}
+                </button>
+              </div>
+              <div className="tag-cloud">
+                {visibleCloudKeywords.map((keyword) => {
+                  const disabled = ((state.disabledCloudKeywords as string[]) ?? []).includes(keyword);
+                  const isAuto = ((state.autoBlockKeywords as string[]) ?? []).includes(keyword);
+                  return (
+                    <KeywordTag
+                      key={keyword}
+                      keyword={keyword}
+                      isAutoBlock={isAuto}
+                      disabled={disabled}
+                      showCheckbox={editingAutoBlock}
+                      checked={isAuto}
+                      onToggleCheck={() => toggleAutoBlockKeyword(keyword, !isAuto)}
+                      onDelete={() => toggleDisabledCloud(keyword, !disabled)}
+                    />
+                  );
+                })}
+                {cloudKeywords.length === 0 && <p className="empty-state">{t.noCloudKeywords}</p>}
+              </div>
+            </DataPanel>
+
+            <DataPanel title={t.customKeywords} meta={`${customKeywords.length}`}>
+              <div className="form-grid inline">
+                <input id="new-keyword" placeholder={t.keywordPlaceholder} onKeyDown={(e) => e.key === 'Enter' && addKeyword()} />
+                <button className="solid-button" type="button" onClick={addKeyword}>
+                  {t.addKeyword}
+                </button>
+                <button className="plain-button" type="button" onClick={importKeywords}>
+                  <Upload size={16} /> {t.import}
+                </button>
+                <button className="plain-button" type="button" onClick={exportKeywords}>
+                  <Download size={16} /> {t.export}
+                </button>
+                <button className="plain-button" type="button" onClick={submitKeywords}>
+                  <Upload size={16} /> {t.submitToGithub}
+                </button>
+              </div>
+              <p className="hint">{t.submitHint}</p>
+              <div className="tag-cloud">
+                {customKeywords.map((keyword) => {
+                  const isAuto = ((state.autoBlockKeywords as string[]) ?? []).includes(keyword);
+                  return (
+                    <KeywordTag
+                      key={keyword}
+                      keyword={keyword}
+                      isAutoBlock={isAuto}
+                      showCheckbox
+                      checked={isAuto}
+                      onToggleCheck={() => toggleAutoBlockKeyword(keyword, !isAuto)}
+                      onDelete={() => deleteKeyword(keyword)}
+                    />
+                  );
+                })}
+                {customKeywords.length === 0 && <p className="empty-state">{t.noCustomKeywords}</p>}
+              </div>
+            </DataPanel>
+          </div>
+        )}
+
+        {view === 'logs' && (
+          <DataPanel title={t.logs} meta={`${filteredLogs.length} / ${logs.length}`}>
+            <div className="toolbar">
+              <select value={logLevel} onChange={(e) => { setLogLevel(e.currentTarget.value); setLogPage(0); }}>
+                {logLevels.map((level) => (
+                  <option key={level} value={level}>{level === 'all' ? t.all : t[`level-${level}`] ?? level}</option>
+                ))}
+              </select>
+              <select value={logCategory} onChange={(e) => { setLogCategory(e.currentTarget.value); setLogPage(0); }}>
+                {logCategories.map((category) => (
+                  <option key={category} value={category}>{category === 'all' ? t.all : t[`cat-${category}`] ?? category}</option>
+                ))}
+              </select>
+              <input
+                placeholder={t.search}
+                value={logQuery}
+                onChange={(e) => { setLogQuery(e.currentTarget.value); setLogPage(0); }}
+              />
+              <button className="plain-button" type="button" onClick={() => exportLogs(filteredLogs)}>
+                <Download size={16} /> {t.export}
+              </button>
+              <button
+                className="plain-button"
+                type="button"
+                onClick={() => { void pruneLogs(7); setStatus(t.prunedNote); }}
+                title={t.pruneTitle}
+              >
+                <Trash2 size={16} /> {t.prune}
+              </button>
+              <button
+                className="plain-button"
+                type="button"
+                onClick={() => { if (window.confirm(t.clearAll)) setValue('xshieldLogs', []); }}
+              >
+                <Trash2 size={16} /> {t.clearAll}
+              </button>
+            </div>
+            <div className="compact-list">
+              {filteredLogs
+                .slice(logPage * LOG_PAGE_SIZE, logPage * LOG_PAGE_SIZE + LOG_PAGE_SIZE)
+                .map((entry) => (
+                  <div className="list-row log-row" key={entry.id}>
+                    <span className={`log-level ${entry.level}`}>{entry.level}</span>
+                    <span className={`log-cat ${entry.category}`}>{entry.category}</span>
+                    <span className="history-text">{entry.message}</span>
+                    <small>{new Date(entry.time).toLocaleString()}</small>
+                  </div>
+                ))}
+              {filteredLogs.length === 0 && <p className="empty-state">{t.logsEmpty}</p>}
+            </div>
+            {filteredLogs.length > LOG_PAGE_SIZE && (
+              <div className="toolbar">
+                <button className="plain-button" type="button" disabled={logPage === 0} onClick={() => setLogPage(logPage - 1)}>‹</button>
+                <span className="toolbar-status">{logPage + 1} / {Math.ceil(filteredLogs.length / LOG_PAGE_SIZE)}</span>
+                <button
+                  className="plain-button"
+                  type="button"
+                  disabled={(logPage + 1) * LOG_PAGE_SIZE >= filteredLogs.length}
+                  onClick={() => setLogPage(logPage + 1)}
+                >›</button>
+              </div>
+            )}
+          </DataPanel>
+        )}
+
+        {view === 'settings' && (
+          <DataPanel title={t.settings}>
+            <div className="settings-grid">
+              <label className="check-label">
+                <span>{t.enabled}</span>
+                <Toggle checked={Boolean(state.enabled)} onChange={(v) => setValue('enabled', v)} />
+              </label>
+              <label>
+                <span>{t.displayMode}</span>
+                <select
+                  value={state.highlightMode ? 'highlight' : 'hide'}
+                  onChange={(e) => setValue('highlightMode', e.currentTarget.value === 'highlight')}
+                >
+                  <option value="hide">{t.modeHide}</option>
+                  <option value="highlight">{t.modeHighlight}</option>
+                </select>
+              </label>
+              <label className="check-label">
+                <span>{t.checkUsername}</span>
+                <Toggle checked={Boolean(state.checkUsername)} onChange={(v) => setValue('checkUsername', v)} />
+              </label>
+              <label className="check-label">
+                <span>{t.onlyComments}</span>
+                <Toggle checked={Boolean(state.onlyComments)} onChange={(v) => setValue('onlyComments', v)} />
+              </label>
+              <label className="check-label">
+                <span>{t.blockSpecialChars}</span>
+                <Toggle checked={Boolean(state.blockSpecialChars)} onChange={(v) => setValue('blockSpecialChars', v)} />
+              </label>
+              <label className="check-label">
+                <span>{t.blockEmoji}</span>
+                <Toggle checked={Boolean(state.blockEmoji)} onChange={(v) => setValue('blockEmoji', v)} />
+              </label>
+              <label className="check-label">
+                <span>{t.blockGrok}</span>
+                <Toggle checked={Boolean(state.blockGrok)} onChange={(v) => setValue('blockGrok', v)} />
+              </label>
+              <label className="check-label">
+                <span>{t.cloudEnabled}</span>
+                <Toggle checked={Boolean(state.cloudEnabled)} onChange={(v) => setValue('cloudEnabled', v)} />
+              </label>
+              <label>
+                <span>{t.language}</span>
+                <select value={String(state.language ?? 'system')} onChange={(e) => setValue('language', e.currentTarget.value)}>
+                  <option value="system">{t.system}</option>
+                  <option value="zh-CN">{t.simplifiedChinese}</option>
+                  <option value="zh-TW">{t.traditionalChinese}</option>
+                  <option value="en">{t.english}</option>
+                  <option value="ja">{t.japanese}</option>
+                  <option value="ko">{t.korean}</option>
+                  <option value="fr">{t.french}</option>
+                </select>
+              </label>
+              <label>
+                <span>{t.cloudOwnerRepo}</span>
+                <input
+                  value={String(state.cloudOwnerRepo ?? '')}
+                  placeholder="amahteru/x-comment-blocker"
+                  onChange={(e) => setValue('cloudOwnerRepo', e.currentTarget.value)}
+                />
+              </label>
+              <label>
+                <span>{t.githubToken}</span>
+                <input type="password" value={String(state.githubToken ?? '')} onChange={(e) => setValue('githubToken', e.currentTarget.value)} />
+              </label>
+              <label>
+                <span>{t.githubOwnerRepo}</span>
+                <input value={String(state.githubOwnerRepo ?? '')} onChange={(e) => setValue('githubOwnerRepo', e.currentTarget.value)} />
+              </label>
+              <label>
+                <span>{t.githubBranch}</span>
+                <input value={String(state.githubBranch ?? 'main')} onChange={(e) => setValue('githubBranch', e.currentTarget.value)} />
+              </label>
+            </div>
+            <p className="hint">{t.cloudSourceHint}</p>
+            <p className="hint">{t.autoBlockNote}</p>
+          </DataPanel>
+        )}
       </section>
     </main>
-  );
-}
-
-function BulkToolbar({
-  allIds,
-  selectedIds,
-  selectedCount,
-  t,
-  onSelectAll,
-  onQueue,
-  onQueueAndRun,
-  onDelete,
-  onWhitelist,
-}: {
-  allIds: string[];
-  selectedIds: string[];
-  selectedCount: number;
-  t: Record<CopyKey, string>;
-  onSelectAll: (ids: string[]) => void;
-  onQueue: () => void;
-  onQueueAndRun?: () => void;
-  onDelete?: () => void;
-  onWhitelist?: () => void;
-}): JSX.Element {
-  return (
-    <div className="toolbar">
-      <label className="check-label">
-        <input
-          type="checkbox"
-          checked={allIds.length > 0 && selectedIds.length === allIds.length}
-          onChange={(event) => onSelectAll(event.currentTarget.checked ? allIds : [])}
-        />
-        {t.selectAll}
-      </label>
-      <button className="plain-button" type="button" disabled={selectedCount === 0} onClick={onQueue}>
-        <ListChecks aria-hidden />
-        {t.queueSelected}
-      </button>
-      {onQueueAndRun && (
-        <button className="solid-button" type="button" disabled={selectedCount === 0} onClick={onQueueAndRun}>
-          <Ban aria-hidden />
-          {t.queueAndRun}
-        </button>
-      )}
-      {onDelete && (
-        <button className="plain-button" type="button" disabled={selectedCount === 0} onClick={onDelete}>
-          <Trash2 aria-hidden />
-          {t.deleteSelected}
-        </button>
-      )}
-      {onWhitelist && (
-        <button className="plain-button" type="button" disabled={selectedCount === 0} onClick={onWhitelist}>
-          <CheckCircle2 aria-hidden />
-          {t.whitelistSelected}
-        </button>
-      )}
-    </div>
-  );
-}
-
-function RuleEditor({
-  draft,
-  t,
-  onChange,
-  onSave,
-  onCancel,
-  onDelete,
-}: {
-  draft: RuleDraft;
-  t: Record<CopyKey, string>;
-  onChange: (draft: RuleDraft) => void;
-  onSave: () => void;
-  onCancel: () => void;
-  onDelete?: () => void;
-}): JSX.Element {
-  return (
-    <div className="rule-form">
-      <label>
-        {t.ruleType}
-        <select
-          value={draft.type}
-          onChange={(event) => onChange({ ...draft, type: event.currentTarget.value as RuleType })}
-        >
-          <option value="keyword">keyword</option>
-          <option value="regex">regex</option>
-        </select>
-      </label>
-      <label className="rule-content-field">
-        {t.content}
-        <textarea
-          value={draft.content}
-          placeholder={t.onePerLine}
-          onChange={(event) => onChange({ ...draft, content: event.currentTarget.value })}
-        />
-      </label>
-      <label>
-        {t.score}
-        <input
-          min={1}
-          max={100}
-          type="number"
-          value={draft.score}
-          onChange={(event) => onChange({ ...draft, score: Number(event.currentTarget.value) })}
-        />
-      </label>
-      <div className="field-group">
-        {fields.map((field) => (
-          <label className="check-label" key={field}>
-            <input
-              type="checkbox"
-              checked={draft.fields.includes(field)}
-              onChange={(event) => {
-                const nextFields = event.currentTarget.checked
-                  ? Array.from(new Set([...draft.fields, field]))
-                  : draft.fields.filter((item) => item !== field);
-                onChange({ ...draft, fields: nextFields });
-              }}
-            />
-            {getFieldLabel(field, t)}
-          </label>
-        ))}
-      </div>
-      <label className="check-label">
-        <input
-          type="checkbox"
-          checked={draft.caseSensitive}
-          onChange={(event) => onChange({ ...draft, caseSensitive: event.currentTarget.checked })}
-        />
-        {t.caseSensitive}
-      </label>
-      <div className="form-actions">
-        <button className="solid-button" type="button" onClick={onSave}>
-          <Plus aria-hidden />
-          {t.save}
-        </button>
-        <button className="plain-button" type="button" onClick={onCancel}>
-          {t.cancel}
-        </button>
-        {onDelete && (
-          <button className="plain-button" type="button" onClick={onDelete}>
-            <Trash2 aria-hidden />
-            {t.deleteRule}
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function SelectableProfileRow({
-  profile,
-  selected,
-  onSelected,
-  onAdd,
-}: {
-  profile: XUserProfile;
-  selected: boolean;
-  onSelected: (selected: boolean) => void;
-  onAdd: () => void;
-}): JSX.Element {
-  return (
-    <div className="list-row">
-      <ProfileIdentity profile={profile} selectable selected={selected} onSelected={onSelected} />
-      <button type="button" onClick={onAdd}>
-        <Plus aria-hidden />
-      </button>
-    </div>
-  );
-}
-
-function CandidateTable({
-  candidates,
-  selectedIds,
-  t,
-  onToggleSelected,
-  onQueue,
-  onWhitelist,
-  onFalsePositive,
-  onDelete,
-}: {
-  candidates: CandidateUser[];
-  selectedIds: string[];
-  t: Record<CopyKey, string>;
-  onToggleSelected: (id: string, selected: boolean) => void;
-  onQueue: (candidate: CandidateUser) => Promise<void>;
-  onWhitelist: (id: string) => Promise<void>;
-  onFalsePositive: (id: string) => Promise<void>;
-  onDelete: (id: string) => Promise<void>;
-}): JSX.Element {
-  return (
-    <div className="table evidence-table candidate-table">
-      <div className="table-row table-head">
-        <span>User</span>
-        <span>{t.score}</span>
-        <span>{t.followers}</span>
-        <span>{t.matched}</span>
-        <span>{t.actions}</span>
-      </div>
-      {candidates.map((candidate) => (
-        <div className="table-row" key={candidate.id}>
-          <span>
-            <ProfileIdentity
-              profile={candidate}
-              selectable
-              selected={selectedIds.includes(candidate.id)}
-              onSelected={(selected) => onToggleSelected(candidate.id, selected)}
-            />
-          </span>
-          <span>{candidate.score}</span>
-          <span>{formatFollowers(candidate)}</span>
-          <span>
-            <span className="status-pill">{candidate.status}</span>
-            <small>{getTriggerSummary(candidate)}</small>
-          </span>
-          <span className="row-actions">
-            <button type="button" title="Add to block queue" onClick={() => void onQueue(candidate)}>
-              <Ban aria-hidden />
-            </button>
-            <button type="button" title="Whitelist" onClick={() => void onWhitelist(candidate.id)}>
-              <CheckCircle2 aria-hidden />
-            </button>
-            <button type="button" title={t.falsePositive} onClick={() => void onFalsePositive(candidate.id)}>
-              <RotateCcw aria-hidden />
-            </button>
-            <button type="button" title="Delete" onClick={() => void onDelete(candidate.id)}>
-              <Trash2 aria-hidden />
-            </button>
-          </span>
-        </div>
-      ))}
-      {candidates.length === 0 && <p className="empty-state">{t.noCandidates}</p>}
-    </div>
-  );
-}
-
-function QueueTable({
-  items,
-  selectedIds,
-  t,
-  onToggleSelected,
-  onRemove,
-}: {
-  items: BlockQueueItem[];
-  selectedIds: string[];
-  t: Record<CopyKey, string>;
-  onToggleSelected: (id: string, selected: boolean) => void;
-  onRemove: (id: string) => Promise<void>;
-}): JSX.Element {
-  return (
-    <div className="table evidence-table queue-table">
-      <div className="table-row table-head">
-        <span>User</span>
-        <span>{t.status}</span>
-        <span>{t.followers}</span>
-        <span>{t.matched}</span>
-        <span>{t.actions}</span>
-      </div>
-      {items.map((item) => (
-        <div className="table-row" key={item.id}>
-          <span>
-            <ProfileIdentity
-              profile={item}
-              selectable
-              selected={selectedIds.includes(item.id)}
-              onSelected={(selected) => onToggleSelected(item.id, selected)}
-            />
-          </span>
-          <span>
-            <span className="status-pill">{item.status}</span>
-            <small>
-              {t.retries}: {item.retryCount}
-            </small>
-            <small>{item.lastError || ''}</small>
-          </span>
-          <span>{formatFollowers(item)}</span>
-          <span>
-            <small>{item.triggerReason || item.matchedRules?.join(', ') || '-'}</small>
-          </span>
-          <span className="row-actions">
-            <button type="button" title="Remove item" onClick={() => void onRemove(item.id)}>
-              <Trash2 aria-hidden />
-            </button>
-          </span>
-        </div>
-      ))}
-      {items.length === 0 && <p className="empty-state">{t.queueEmpty}</p>}
-    </div>
-  );
-}
-
-function ProfileEvidenceRow({
-  profile,
-  t,
-}: {
-  profile: CandidateUser;
-  t: Record<CopyKey, string>;
-}): JSX.Element {
-  return (
-    <div className="list-row evidence-row">
-      <span className="profile-stack">
-        <ProfileIdentity profile={profile} />
-        <small>
-          {t.followers}: {formatFollowers(profile)} / {t.matched}: {getTriggerSummary(profile)}
-        </small>
-      </span>
-      <span className="mode-badge">{profile.score}</span>
-    </div>
-  );
-}
-
-function DataPanel({
-  title,
-  meta,
-  children,
-}: {
-  title: string;
-  meta: string;
-  children: ReactNode;
-}): JSX.Element {
-  return (
-    <section className="panel">
-      <div className="panel-header">
-        <h2>{title}</h2>
-        <span>{meta}</span>
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function NumberField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  onChange: (value: number) => void;
-}): JSX.Element {
-  return (
-    <label>
-      {label}
-      <input min={0} type="number" value={value} onChange={(event) => onChange(Number(event.currentTarget.value))} />
-    </label>
   );
 }

@@ -7,24 +7,19 @@
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -p tsconfig.json && vite build",
     "lint": "eslint src --ext .ts,.tsx",
-    "test": "node -e \"console.log('No extension tests yet')\""
+    "test": "vitest run"
   },
   "dependencies": {
     "@crxjs/vite-plugin": "^2.0.0-beta.25",
     "@vitejs/plugin-react": "^4.3.1",
-    "@xshield/block-executor": "workspace:*",
-    "@xshield/rule-engine": "workspace:*",
-    "@xshield/search-engine": "workspace:*",
-    "@xshield/shared": "workspace:*",
-    "dexie": "^4.0.8",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "vite": "^5.3.5",
-    "zustand": "^4.5.4"
+    "vite": "^5.3.5"
   },
   "devDependencies": {
     "@types/react": "^18.3.3",
-    "@types/react-dom": "^18.3.0"
+    "@types/react-dom": "^18.3.0",
+    "jsdom": "^30.0.1"
   }
 }

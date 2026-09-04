@@ -95,8 +95,6 @@ export type LanguageMode = 'system' | 'en' | 'zh' | 'zh-CN' | 'zh-TW' | 'ja' | '
 
 export type RuleExecutionMode = 'automatic' | 'manual';
 
-export type BlockAdapterMode = 'mock' | 'real';
-
 export type LogLevel = 'info' | 'warn' | 'error';
 
 export interface ActivityLog {
@@ -115,7 +113,6 @@ export interface AppSettings {
   language: LanguageMode;
   ruleExecutionMode: RuleExecutionMode;
   rulesRunning: boolean;
-  blockAdapterMode: BlockAdapterMode;
   lastQueueRunAt?: number;
   builtInAdRulesSeeded?: boolean;
   builtInAdRulesVersion?: number;

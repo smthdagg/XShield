@@ -1,103 +1,799 @@
-import { evaluateUser } from '@xshield/rule-engine';
-import { DEFAULT_SCORE_THRESHOLD } from '@xshield/shared';
-import type { CandidateUser, XUserProfile } from '@xshield/shared';
-import { db } from '../db/dexie';
-import { addLog } from '../db/logs';
-import { seedDefaults } from '../db/seed';
+/**
+ * Background — aligned with X(Twitter) Comment Blocker 1.5.1 background.js:
+ *   - blocking posts screen_name directly to blocks/create.json|destroy.json
+ *     (no user-id resolution round-trip);
+ *   - the auto-block queue is pop-first and crash-safe;
+ *   - trigger records are never deleted by a successful block — the ledger
+ *     `blockedUsersOnX` marks users as blocked and the UI renders the state;
+ *   - XShield deviations: an activity log (addLog), submitKeywords action,
+ *     AsyncQueue single-writer for history batches, and queueInfo side table.
+ */
 import {
-  canonicalizeProfile,
-  ensureCanonicalUserRecords,
-  upsertCandidate,
-  upsertDiscoveredUsers,
-} from '../db/users';
-import { BLOCK_QUEUE_ALARM, runBlockQueueBatch, syncBlockQueueAlarm } from '../store/queueRunner';
-import type { QueueRunResult, RuntimeMessage } from '../types';
+  browserApi as chrome,
+  DEFAULT_CLOUD_OWNER_REPO,
+  extractCleanScreenName,
+  getLocalDateString,
+  getStorageDefaults,
+  parseKeywords,
+  submitKeywordsToGithub,
+  syncCloudKeywords,
+  SYNC_INTERVAL_MINUTES,
+  addLog,
+} from '../store/blockerStorage';
 
-async function upsertCandidates(users: XUserProfile[]): Promise<CandidateUser[]> {
-  await seedDefaults();
-  await ensureCanonicalUserRecords();
-  const canonicalUsers = await upsertDiscoveredUsers(users.map(canonicalizeProfile));
-  if (canonicalUsers.length > 0) {
-    await addLog('info', `Scanned ${canonicalUsers.length} visible X user(s)`, 'content-script');
+const ALARM_NAME = 'cloudKeywordSync';
+let isSyncing = false;
+
+class SyncLock {
+  constructor() {
+    isSyncing = true;
   }
-
-  const settings = await db.settings.get('default');
-  if (!settings?.rulesRunning || settings.ruleExecutionMode !== 'automatic') return [];
-
-  const threshold = settings?.scoreThreshold ?? DEFAULT_SCORE_THRESHOLD;
-  const rules = (await db.rules.toArray()).filter((rule) => rule.enabled);
-  const now = Date.now();
-  const candidates: CandidateUser[] = [];
-
-  for (const user of canonicalUsers) {
-    const result = evaluateUser(user, rules, threshold);
-    if (!result.matched) continue;
-
-    const existing = await db.candidates.get(user.id);
-    if (existing?.status === 'whitelisted') continue;
-    if (await db.blockedUsers.get(user.id)) continue;
-
-    const candidate = await upsertCandidate({
-      ...user,
-      score: result.score,
-      status: existing?.status ?? 'candidate',
-      matchedRules: result.matchedRules,
-      matchedFields: result.matchedFields,
-      triggerReason: result.matchedRules.join(', '),
-      note: existing?.note,
-      updatedAt: now,
-    });
-    if (candidate) candidates.push(candidate);
+  dispose() {
+    isSyncing = false;
   }
-
-  if (candidates.length > 0) {
-    await addLog(
-      'info',
-      `Triggered ${candidates.length} candidate user(s): ${candidates
-        .slice(0, 5)
-        .map((candidate) => `@${candidate.username}`)
-        .join(', ')}`,
-      'content-script',
-    );
-  }
-
-  return candidates;
 }
 
-chrome.runtime.onInstalled.addListener(() => {
-  void seedDefaults().then(syncBlockQueueAlarm);
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  return {
+    authorization:
+      'Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA',
+  };
+}
+
+class ProcessingLock {
+  constructor(private obj: { isProcessing: boolean }) {
+    this.obj.isProcessing = true;
+  }
+  dispose() {
+    this.obj.isProcessing = false;
+  }
+}
+
+class AsyncQueue {
+  queue: Array<() => Promise<void>> = [];
+  isProcessing = false;
+  enqueue<T>(task: () => Promise<T>): Promise<T> {
+    const run = async (): Promise<T> => {
+      try {
+        return await task();
+      } catch (e) {
+        console.error('[X-Blocker] Queue task error:', e);
+        return undefined as T;
+      }
+    };
+    const promise = new Promise<T>((resolve) => {
+      this.queue.push(async () => {
+        resolve(await run());
+      });
+    });
+    void this.process();
+    return promise;
+  }
+  async process(): Promise<void> {
+    if (this.isProcessing) return;
+    const _lock = new ProcessingLock(this);
+
+    try {
+      while (this.queue.length > 0) {
+        const task = this.queue.shift();
+        if (!task) break;
+        await task();
+      }
+    } finally {
+      _lock.dispose();
+    }
+  }
+}
+
+interface SpamItem {
+  id?: string;
+  text?: string;
+  user?: string;
+  displayName?: string;
+  reason?: string;
+  time?: number;
+  isAutoBlock?: boolean;
+}
+
+const globalSpamCache = new Set<string>();
+const storageQueue = new AsyncQueue();
+
+let inMemoryHistory: SpamItem[] | null = null;
+let inMemoryBlockedCount: number | null = null;
+let pendingSpamBatch: SpamItem[] = [];
+let spamBatchTimer: ReturnType<typeof setTimeout> | null = null;
+const currentSessionToken = crypto.randomUUID();
+
+function syncGlobalSpamCache(): void {
+  globalSpamCache.clear();
+  for (const item of inMemoryHistory ?? []) {
+    if (item?.id) {
+      globalSpamCache.add(item.id);
+    }
+  }
+  for (const item of pendingSpamBatch) {
+    if (item?.id) {
+      globalSpamCache.add(item.id);
+    }
+  }
+}
+
+const initHistoryPromise = storageQueue.enqueue(async () => {
+  try {
+    const items = await chrome.storage.local.get(
+      getStorageDefaults('blockedCount', 'blockedHistory'),
+    );
+    inMemoryHistory = (items.blockedHistory as SpamItem[]) ?? [];
+    inMemoryBlockedCount = (items.blockedCount as number) ?? 0;
+    syncGlobalSpamCache();
+  } catch (e) {
+    console.error('[X-Blocker] Init history error:', e);
+    inMemoryHistory ??= [];
+    inMemoryBlockedCount ??= 0;
+  }
 });
 
-chrome.runtime.onStartup.addListener(() => {
-  void syncBlockQueueAlarm();
+async function ensureHistoryInitialized(): Promise<void> {
+  if (inMemoryHistory === null) {
+    await initHistoryPromise;
+  }
+}
+
+async function saveHistoryState(): Promise<void> {
+  try {
+    await chrome.storage.local.set({
+      blockedCount: inMemoryBlockedCount,
+      blockedHistory: inMemoryHistory,
+      _historyRev: currentSessionToken,
+    });
+  } catch (e) {
+    console.error('[X-Blocker] saveHistoryState error:', e);
+  }
+}
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local') return;
+
+  if (changes._historyRev && changes._historyRev.newValue === currentSessionToken) {
+    return;
+  }
+
+  if (changes.blockedHistory) {
+    inMemoryHistory = (changes.blockedHistory.newValue as SpamItem[]) ?? [];
+    syncGlobalSpamCache();
+  }
+
+  if (changes.blockedCount) {
+    inMemoryBlockedCount = (changes.blockedCount.newValue as number) ?? 0;
+  }
+});
+
+/**
+ * First-run safety net: if the user has no cloud keywords yet (fresh install
+ * or every network path failed), seed from the bundled keywords.txt so the
+ * filter works immediately.
+ */
+async function seedBundledKeywords(): Promise<void> {
+  try {
+    const items = await chrome.storage.local.get(getStorageDefaults('cloudKeywords'));
+    if ((items.cloudKeywords as string) ?? '') return;
+    const response = await fetch(chrome.runtime.getURL('keywords.txt'));
+    if (!response.ok) return;
+    const list = parseKeywords(await response.text());
+    if (list.length === 0) return;
+    await chrome.storage.local.set({ cloudKeywords: list.join('\n') });
+    void addLog('info', 'system', `内置词库已载入 ${list.length} 个词`);
+  } catch {
+    // Bundled seed is best-effort.
+  }
+}
+
+async function doSync(): Promise<{ success: boolean; reason?: string }> {
+  if (isSyncing) return { success: false, reason: 'busy' };
+  const _lock = new SyncLock();
+
+  try {
+    const items = await chrome.storage.local.get({ cloudOwnerRepo: '' });
+    const ownerRepo = (items.cloudOwnerRepo as string) || DEFAULT_CLOUD_OWNER_REPO;
+    const success = await syncCloudKeywords(ownerRepo);
+    void addLog(success ? 'info' : 'error', 'sync', `词库同步${success ? '成功' : '失败'}（来源：${ownerRepo}）`);
+    return { success };
+  } finally {
+    _lock.dispose();
+  }
+}
+
+chrome.runtime.onInstalled.addListener(async () => {
+  void addLog('info', 'system', `扩展已安装/更新（v${chrome.runtime.getManifest().version}）`);
+  chrome.alarms.create(ALARM_NAME, {
+    delayInMinutes: 1,
+    periodInMinutes: SYNC_INTERVAL_MINUTES,
+  });
+
+  chrome.alarms.create('autoBlockWatchdog', {
+    delayInMinutes: 1,
+    periodInMinutes: 1,
+  });
+
+  void doSync();
+  void seedBundledKeywords();
+
+  if (chrome.contextMenus) {
+    // removeAll -> create must be strictly sequential; the create error is
+    // reported via runtime.lastError (async), so read it in the callback to
+    // suppress "Unchecked runtime.lastError". A duplicate id on rapid reload
+    // is harmless — the menu already exists.
+    chrome.contextMenus.removeAll(() => {
+      chrome.contextMenus.create(
+        {
+          id: 'addToBlocklist',
+          title: '添加「%s」到屏蔽词',
+          contexts: ['selection'],
+          documentUrlPatterns: ['*://*.twitter.com/*', '*://*.x.com/*'],
+        },
+        () => {
+          const error = chrome.runtime.lastError;
+          if (error && !/duplicate/i.test(error.message ?? '')) {
+            console.warn('[XShield] contextMenus.create:', error.message);
+          }
+        },
+      );
+    });
+  }
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name !== BLOCK_QUEUE_ALARM) return;
-  void runBlockQueueBatch();
+  if (alarm.name === ALARM_NAME) {
+    void doSync();
+  } else if (alarm.name === 'autoBlockWatchdog') {
+    void autoBlockManager.process();
+  }
 });
 
-chrome.runtime.onMessage.addListener((message: RuntimeMessage<XUserProfile[]>, _sender, sendResponse) => {
-  if (message?.source !== 'xshield') return;
+const MAX_BLOCK_RETRIES = 5;
 
-  if (message.type === 'VISIBLE_USERS_COLLECTED') {
-    void upsertCandidates(message.payload ?? []).then((candidates) => {
-      sendResponse({
-        usernames: candidates.map((candidate) => candidate.username),
+class AutoBlockManager {
+  isProcessing = false;
+  dailyLimit = 300;
+  batchLimit = 30;
+  minDelayMs = 5000;
+  maxDelayMs = 10000;
+
+  queue: string[] = [];
+  blockedUsersSet = new Set<string>();
+  retryCounts = new Map<string, number>();
+  countToday = 0;
+  batchCount = 0;
+  lastDate = '';
+  pausedUntil = 0;
+  initialized = false;
+  initPromise: Promise<void> | null = null;
+
+  async checkDailyReset(): Promise<void> {
+    const today = getLocalDateString();
+    if (this.lastDate !== today) {
+      this.lastDate = today;
+      this.countToday = 0;
+      this.batchCount = 0;
+      await this.saveState({
+        autoBlockLastDate: this.lastDate,
+        autoBlockToday: this.countToday,
+        autoBlockBatchCount: this.batchCount,
       });
+    }
+  }
+
+  async refreshFromStorage(): Promise<void> {
+    const items = await chrome.storage.local.get(
+      getStorageDefaults(
+        'autoBlockQueue',
+        'autoBlockToday',
+        'autoBlockLastDate',
+        'autoBlockPausedUntil',
+        'autoBlockBatchCount',
+        'blockedUsersOnX',
+      ),
+    );
+
+    this.queue = (items.autoBlockQueue as string[]) ?? [];
+    this.countToday = (items.autoBlockToday as number) ?? 0;
+    this.lastDate = (items.autoBlockLastDate as string) ?? '';
+    this.pausedUntil = (items.autoBlockPausedUntil as number) ?? 0;
+    this.batchCount = (items.autoBlockBatchCount as number) ?? 0;
+    this.blockedUsersSet = new Set((items.blockedUsersOnX as string[]) ?? []);
+  }
+
+  async init(): Promise<void> {
+    if (this.initialized) return;
+    this.initPromise ??= (async () => {
+      await this.refreshFromStorage();
+      await this.checkDailyReset();
+
+      this.initialized = true;
+    })();
+    await this.initPromise;
+  }
+
+  async saveState(updates: Record<string, unknown>): Promise<void> {
+    await chrome.storage.local.set(updates);
+  }
+
+  async enqueueBatch(screenNames: string[]): Promise<number> {
+    await this.init();
+    if (!screenNames || screenNames.length === 0) return 0;
+
+    const validNames = Array.from(new Set(screenNames.map(extractCleanScreenName))).filter(
+      (name) =>
+        name &&
+        /^[a-zA-Z0-9_]{1,15}$/v.test(name) &&
+        !this.queue.includes(name) &&
+        !this.blockedUsersSet.has(name),
+    );
+
+    if (validNames.length > 0) {
+      this.queue.push(...validNames);
+      await this.saveState({ autoBlockQueue: this.queue });
+      void addLog('info', 'block', `${validNames.length} 个用户加入待拉黑队列`);
+      void this.process();
+    }
+
+    return validNames.length;
+  }
+
+  async process(): Promise<void> {
+    if (this.isProcessing) return;
+    const _lock = new ProcessingLock(this);
+
+    try {
+      try {
+        await this.init();
+
+        for (;;) {
+          await this.refreshFromStorage();
+          await this.checkDailyReset();
+
+          const now = Date.now();
+          if (this.pausedUntil > now) {
+            const remainSeconds = Math.ceil((this.pausedUntil - now) / 1000);
+            console.warn(`[X-Blocker] Auto block paused for ${remainSeconds}s.`);
+            break;
+          }
+
+          if (this.countToday >= this.dailyLimit) {
+            console.warn('[X-Blocker] Auto block daily limit reached.');
+            void addLog('warn', 'block', '自动拉黑已达每日上限（300），明天继续');
+            break;
+          }
+
+          if (this.batchCount >= this.batchLimit) {
+            console.warn('[X-Blocker] Auto block batch limit reached. Pausing for 15 mins.');
+            this.pausedUntil = Date.now() + 15 * 60 * 1000;
+            this.batchCount = 0;
+            await this.saveState({
+              autoBlockPausedUntil: this.pausedUntil,
+              autoBlockBatchCount: this.batchCount,
+            });
+            void addLog('info', 'block', '一批（30 个）执行完成，暂停 15 分钟');
+            break;
+          }
+
+          if (this.queue.length === 0) break;
+
+          // Pop-first (1.5.1): persist the shortened queue before the network
+          // call, so a crashed MV3 worker never re-blocks the same user.
+          const currentItem = this.queue.shift() ?? '';
+          await this.saveState({ autoBlockQueue: this.queue });
+
+          let outcome: string | null = null;
+          let failReason = '';
+          let pauseUntil = 0;
+          try {
+            const res = await handleBlockUser(currentItem, true);
+            if (res?.success) {
+              outcome = 'success';
+            } else if (res?.status === 429) {
+              outcome = 'rate-limited';
+              pauseUntil = Date.now() + 15 * 60 * 1000;
+            } else if (res?.permanent || (res?.status && res.status >= 400 && res.status < 500)) {
+              outcome = 'failed';
+              failReason = res?.reason ?? 'unknown';
+            } else {
+              outcome = 'transient';
+              failReason = res?.reason ?? 'unknown';
+            }
+          } catch (e) {
+            console.error('[X-Blocker] Auto block task execution error:', e);
+            outcome = 'transient';
+            failReason = 'task error';
+          }
+
+          if (outcome === 'success') {
+            this.retryCounts.delete(currentItem);
+            this.countToday++;
+            this.batchCount++;
+            // Ledger write happened inside handleBlockUser (markBlockedOnX) —
+            // the queue here only tracks counters.
+            await this.saveState({
+              autoBlockQueue: this.queue,
+              autoBlockToday: this.countToday,
+              autoBlockBatchCount: this.batchCount,
+            });
+            void addLog('info', 'block', `已拉黑 @${currentItem}（今日第 ${this.countToday} 个）`);
+          } else if (outcome === 'rate-limited') {
+            console.warn('[X-Blocker] API rate limited (429). Pausing auto block for 15 mins.');
+            this.queue.unshift(currentItem);
+            this.pausedUntil = pauseUntil;
+            this.batchCount = 0;
+            await this.saveState({
+              autoBlockQueue: this.queue,
+              autoBlockPausedUntil: this.pausedUntil,
+              autoBlockBatchCount: this.batchCount,
+            });
+            void addLog('warn', 'block', '触发 X 限流（429），暂停 15 分钟');
+            break;
+          } else if (outcome === 'transient') {
+            const attempts = (this.retryCounts.get(currentItem) ?? 0) + 1;
+            this.retryCounts.set(currentItem, attempts);
+            if (attempts > MAX_BLOCK_RETRIES) {
+              console.error(
+                `[X-Blocker] Auto block giving up on ${currentItem} after ${attempts} attempts:`,
+                failReason,
+              );
+              void addLog('error', 'block', `放弃重试 @${currentItem}：${failReason}`);
+              this.retryCounts.delete(currentItem);
+              await this.saveState({ autoBlockQueue: this.queue });
+            } else {
+              console.warn(
+                `[X-Blocker] Auto block transient failure for ${currentItem}, retry ${attempts}/${MAX_BLOCK_RETRIES}:`,
+                failReason,
+              );
+              this.queue.push(currentItem);
+              await this.saveState({ autoBlockQueue: this.queue });
+              await new Promise((r) =>
+                setTimeout(r, Math.min(30_000, 5_000 * 2 ** (attempts - 1))),
+              );
+            }
+          } else {
+            this.retryCounts.delete(currentItem);
+            // Expected permanent failures (e.g. account already deleted) are
+            // logged as warnings, not console errors.
+            console.warn('[X-Blocker] Auto block skipped:', currentItem, failReason);
+            void addLog('warn', 'block', `跳过 @${currentItem}：${failReason}`);
+            await this.saveState({ autoBlockQueue: this.queue });
+          }
+
+          if (this.queue.length > 0) {
+            const delay =
+              Math.floor(Math.random() * (this.maxDelayMs - this.minDelayMs + 1)) + this.minDelayMs;
+            await new Promise((r) => setTimeout(r, delay));
+          }
+        }
+      } catch (e) {
+        console.error('[X-Blocker] AutoBlockManager process error:', e);
+      }
+    } finally {
+      _lock.dispose();
+    }
+  }
+}
+
+const autoBlockManager = new AutoBlockManager();
+void autoBlockManager.init().then(() => {
+  void autoBlockManager.process();
+});
+
+async function blockAllHistoryUsers(usersToBlock: string[]): Promise<{ success: boolean; total: number; queued: number }> {
+  const names = Array.isArray(usersToBlock) ? usersToBlock : [];
+  const queued = await autoBlockManager.enqueueBatch(names);
+  return { success: true, total: names.length, queued };
+}
+
+chrome.runtime.onMessage.addListener((message: Record<string, unknown>, _sender, sendResponse) => {
+  if (message.action === 'syncNow') {
+    void doSync().then(sendResponse);
+    return true;
+  }
+  if (message.action === 'submitKeywords') {
+    void submitKeywordsToGithub().then(async (res) => {
+      void addLog(res.success ? 'info' : 'error', 'sync', `上传词库到 GitHub${res.success ? '成功' : `失败：${res.reason ?? ''}`}`);
+      sendResponse(res);
     });
     return true;
   }
-
-  if (message.type === 'RUN_BLOCK_QUEUE') {
-    void runBlockQueueBatch({ force: true }).then((result: QueueRunResult) => sendResponse(result));
+  if (message.action === 'blockUserOnX') {
+    void handleBlockUser(String(message.screenName ?? ''), true).then((res) => {
+      void addLog(res?.success ? 'info' : 'error', 'block', `手动拉黑 @${String(message.screenName ?? '')} ${res?.success ? '成功' : `失败：${res?.reason ?? ''}`}`);
+      sendResponse(res);
+    });
     return true;
   }
-
-  if (message.type === 'SYNC_BLOCK_QUEUE_ALARM') {
-    void syncBlockQueueAlarm().then(() => sendResponse({ success: true }));
+  if (message.action === 'unblockUserOnX') {
+    void handleBlockUser(String(message.screenName ?? ''), false).then((res) => {
+      void addLog(res?.success ? 'info' : 'warn', 'block', `解除拉黑 @${String(message.screenName ?? '')} ${res?.success ? '成功' : `失败：${res?.reason ?? ''}`}`);
+      sendResponse(res);
+    });
     return true;
   }
-
+  if (message.action === 'blockAllHistoryUsers') {
+    void blockAllHistoryUsers((message.users as string[]) ?? []).then(sendResponse);
+    return true;
+  }
+  if (message.action === 'recordSpam') {
+    void handleRecordSpam((message.items as SpamItem[]) ?? [])
+      .then(() => sendResponse({ success: true }))
+      .catch((e: Error) => sendResponse({ success: false, error: e.message }));
+    return true;
+  }
+  if (message.action === 'clearSpamCache') {
+    if (spamBatchTimer) {
+      clearTimeout(spamBatchTimer);
+      spamBatchTimer = null;
+    }
+    pendingSpamBatch = [];
+    notifyContentScripts({ action: 'clearLocalSentIds' });
+    void storageQueue
+      .enqueue(async () => {
+        if (spamBatchTimer) {
+          clearTimeout(spamBatchTimer);
+          spamBatchTimer = null;
+        }
+        pendingSpamBatch = [];
+        inMemoryHistory = [];
+        inMemoryBlockedCount = 0;
+        globalSpamCache.clear();
+        await saveHistoryState();
+      })
+      .then(() => sendResponse({ success: true }));
+    return true;
+  }
+  if (message.action === 'removeSpamRecord') {
+    void handleRemoveSpamRecord(String(message.id ?? ''), message.time as number | undefined).then(sendResponse);
+    return true;
+  }
   return false;
 });
+
+async function notifyContentScripts(message: Record<string, unknown>): Promise<void> {
+  const tabs = await chrome.tabs.query({
+    url: ['*://*.twitter.com/*', '*://*.x.com/*'],
+  });
+  for (const tab of tabs) {
+    if (tab.id) chrome.tabs.sendMessage(tab.id, message).catch(() => {});
+  }
+}
+
+/**
+ * The background never deletes trigger records on block success (1.5.1 model):
+ * `blockedUsersOnX` is the ledger that marks a user as blocked, and the UI
+ * renders blocked state from it. Records stay put so nothing "drifts".
+ */
+async function markBlockedOnX(cleanName: string): Promise<void> {
+  const stored = (await chrome.storage.local.get('blockedUsersOnX')).blockedUsersOnX ?? [];
+  await chrome.storage.local.set({
+    blockedUsersOnX: Array.from(new Set([...(stored as string[]), cleanName])).slice(-10000),
+  });
+  autoBlockManager.blockedUsersSet.add(cleanName);
+  if (autoBlockManager.blockedUsersSet.size > 10000) {
+    const dropCount = autoBlockManager.blockedUsersSet.size - 10000;
+    autoBlockManager.blockedUsersSet = new Set(
+      Array.from(autoBlockManager.blockedUsersSet).slice(dropCount),
+    );
+  }
+}
+
+async function markUnblockedOnX(cleanName: string): Promise<void> {
+  const stored = (await chrome.storage.local.get('blockedUsersOnX')).blockedUsersOnX ?? [];
+  await chrome.storage.local.set({
+    blockedUsersOnX: (stored as string[]).filter((name) => name !== cleanName),
+  });
+  autoBlockManager.blockedUsersSet.delete(cleanName);
+}
+
+function handleRemoveSpamRecord(id: string, time?: number): Promise<{ success: boolean }> {
+  const isMatch = (item: SpamItem) => !(item.id === id && (!time || item.time === time));
+
+  if (id) {
+    void notifyContentScripts({ action: 'removeLocalSentId', id });
+  }
+
+  if (pendingSpamBatch.length > 0) {
+    const originalPendingLength = pendingSpamBatch.length;
+    pendingSpamBatch = pendingSpamBatch.filter(isMatch);
+    if (originalPendingLength > pendingSpamBatch.length && id) {
+      globalSpamCache.delete(id);
+    }
+  }
+
+  return storageQueue.enqueue(async () => {
+    await ensureHistoryInitialized();
+
+    const originalLength = (inMemoryHistory ?? []).length;
+    inMemoryHistory = (inMemoryHistory ?? []).filter(isMatch);
+
+    const removedCount = originalLength - (inMemoryHistory ?? []).length;
+    if (removedCount > 0) {
+      if (id) {
+        globalSpamCache.delete(id);
+      }
+      inMemoryBlockedCount = Math.max(0, (inMemoryBlockedCount ?? 0) - removedCount);
+      await saveHistoryState();
+    }
+  }) as unknown as Promise<{ success: boolean }>;
+}
+
+/**
+ * Persist display info (nickname / triggering text) for queue cards. The
+ * queue itself stays a plain string list (1.4.3 behaviour); this side table
+ * only powers the dashboard card UI.
+ */
+async function setQueueInfo(entries: Array<{ name: string; displayName?: string; text?: string }>): Promise<void> {
+  try {
+    const items = await chrome.storage.local.get({ queueInfo: {} });
+    const info = (items.queueInfo as Record<string, { displayName?: string; text?: string }>) ?? {};
+    for (const entry of entries) {
+      if (!entry.name) continue;
+      const existing = info[entry.name];
+      info[entry.name] = {
+        displayName: entry.displayName || existing?.displayName,
+        text: entry.text || existing?.text,
+      };
+    }
+    await chrome.storage.local.set({ queueInfo: info });
+  } catch {
+    // Best-effort side table.
+  }
+}
+
+async function flushSpamBatch(): Promise<void> {
+  if (spamBatchTimer) {
+    clearTimeout(spamBatchTimer);
+    spamBatchTimer = null;
+  }
+  if (pendingSpamBatch.length === 0) return;
+  const batch = pendingSpamBatch;
+  pendingSpamBatch = [];
+
+  await storageQueue.enqueue(async () => {
+    await ensureHistoryInitialized();
+    (inMemoryHistory ?? []).unshift(...batch.reverse());
+    if ((inMemoryHistory ?? []).length > 5000) {
+      const history = inMemoryHistory ?? [];
+      const evicted = history.slice(5000);
+      history.length = 5000;
+      for (const item of evicted) {
+        if (item?.id) {
+          globalSpamCache.delete(item.id);
+        }
+      }
+    }
+    inMemoryBlockedCount = (inMemoryBlockedCount ?? 0) + batch.length;
+    await saveHistoryState();
+  });
+}
+
+async function handleRecordSpam(items: SpamItem[]): Promise<void> {
+  if (!items?.length) return;
+  await ensureHistoryInitialized();
+
+  const newSpams: SpamItem[] = [];
+  for (const item of items) {
+    if (!item?.id || globalSpamCache.has(item.id)) continue;
+    globalSpamCache.add(item.id);
+    newSpams.push({
+      id: item.id,
+      text: item.text ? item.text.slice(0, 200) : '',
+      user: item.user || '',
+      displayName: item.displayName || '',
+      reason: item.reason || '',
+      time: item.time || Date.now(),
+      isAutoBlock: item.isAutoBlock === true,
+    });
+  }
+
+  if (newSpams.length === 0) return;
+  void addLog('info', 'trigger', `检测到 ${newSpams.length} 条垃圾回复（含 ${newSpams.filter((x) => x.isAutoBlock).length} 条自动拉黑）`);
+
+  const autoBlockSpams = newSpams.filter((s) => s.isAutoBlock && s.user);
+
+  if (autoBlockSpams.length > 0) {
+    const autoBlockScreenNames = autoBlockSpams.map((s) => s.user as string);
+    void setQueueInfo(autoBlockSpams.map((spam) => ({
+      name: extractCleanScreenName(spam.user ?? ''),
+      displayName: spam.displayName,
+      text: spam.text,
+    })));
+    void autoBlockManager.enqueueBatch(autoBlockScreenNames);
+  }
+
+  pendingSpamBatch.push(...newSpams);
+  if (!spamBatchTimer) {
+    spamBatchTimer = setTimeout(() => {
+      spamBatchTimer = null;
+      void flushSpamBatch();
+    }, 50);
+  }
+}
+
+interface BlockApiResponse {
+  errors?: Array<{ message?: string; code?: number }>;
+}
+
+interface BlockUserResult {
+  success: boolean;
+  reason?: string;
+  status?: number;
+  permanent?: boolean;
+  screenName?: string;
+}
+
+/**
+ * 1.5.1 block contract: a single POST addressed by screen_name. No profile
+ * page parsing, no id resolution — HTTP ok means the block happened (a body
+ * that fails to parse still counts as success; body errors with the permanent
+ * codes 34/50/63 mean the account is gone and must not be retried).
+ * On success the ledger is updated here (single writer) so the dashboard
+ * never writes `blockedUsersOnX` itself.
+ */
+async function handleBlockUser(screenName: string, isBlock: boolean): Promise<BlockUserResult> {
+  try {
+    const cleanName = extractCleanScreenName(screenName);
+    if (!cleanName) {
+      return { success: false, reason: '无效的用户名', permanent: true };
+    }
+    const cookie = await chrome.cookies.get({
+      url: 'https://x.com',
+      name: 'ct0',
+    });
+    if (!cookie) {
+      return { success: false, reason: '无法获取身份凭证，请确保已登录 X' };
+    }
+
+    const endpoint = isBlock ? 'create.json' : 'destroy.json';
+    const headers = await getAuthHeaders();
+
+    headers['x-csrf-token'] = cookie.value;
+    headers['content-type'] = 'application/x-www-form-urlencoded';
+
+    const response = await fetch(`https://x.com/i/api/1.1/blocks/${endpoint}`, {
+      method: 'POST',
+      headers,
+      credentials: 'include',
+      body: `screen_name=${encodeURIComponent(cleanName)}`,
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (response.ok) {
+      try {
+        const data = (await response.json()) as BlockApiResponse;
+        if (data?.errors?.length) {
+          const messages = data.errors
+            .map((e) => e.message)
+            .filter(Boolean)
+            .join('; ');
+          const PERMANENT_ERROR_CODES = new Set([34, 50, 63]);
+          const isPermanent = data.errors.every(
+            (e) => typeof e.code === 'number' && PERMANENT_ERROR_CODES.has(e.code),
+          );
+          return { success: false, reason: `API 错误: ${messages}`, permanent: isPermanent };
+        }
+      } catch {
+        // Unparseable body — X accepted the request anyway (1.5.1 behaviour).
+      }
+
+      if (isBlock) {
+        await markBlockedOnX(cleanName);
+      } else {
+        await markUnblockedOnX(cleanName);
+      }
+      return { success: true, screenName: cleanName };
+    }
+
+    return {
+      success: false,
+      reason: `请求失败: HTTP ${response.status}`,
+      status: response.status,
+    };
+  } catch (error) {
+    return { success: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+}

@@ -1,0 +1,18 @@
+.x-comment-blocker-hidden,
+.x-comment-blocker-hidden-reply {
+  display: none !important;
+}
+
+/* XShield highlight mode: yellow background + red text instead of hiding */
+.xshield-hit,
+.xshield-hit * {
+  color: #b91c1c !important;
+  text-decoration-color: #b91c1c !important;
+}
+.xshield-hit {
+  background: #fff3bf !important;
+  box-shadow: inset 4px 0 0 #f4c430 !important;
+}
+.xshield-hit a {
+  color: #7f1010 !important;
+}

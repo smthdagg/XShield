@@ -1,458 +1,722 @@
-import type { XUserProfile } from '@xshield/shared';
-import type {
-  CollectVisibleUsersPayload,
-  MatchedUsersPayload,
-  RealBlockUserPayload,
-  RealBlockUserResult,
-  RuntimeMessage,
-} from '../types';
+/**
+ * Content script — ported 1:1 from X(Twitter) Comment Blocker 1.4.3 content.js.
+ * Only deviations: Temporal -> Date.now(), iterator helpers use equivalent
+ * array ops, and the module runs at top level instead of inside an IIFE.
+ */
+import {
+  extractCleanScreenName,
+  getStorageDefaults,
+  invisibleCharsRegex,
+  parseKeywords,
+} from '../store/blockerStorage';
 
-const RESERVED_PATHS = new Set([
-  'home',
-  'explore',
-  'notifications',
-  'messages',
-  'i',
-  'intent',
-  'search',
-  'settings',
-  'compose',
-  'hashtag',
-  'topics',
-  'lists',
-]);
+let blockRegexes: RegExp[] = [];
+let autoBlockRegexes: RegExp[] = [];
+let lastKeywordsKey = '';
+let checkUsername = true;
+let onlyComments = true;
+let blockSpecialChars = false;
+let blockEmoji = false;
+let blockGrok = false;
+let filterEnabled = true;
+let highlightMode = false;
+let filterTimer: number | null = null;
+let filterVersion = 0;
+let whitelistSet = new Set<string>();
+let observerFlushScheduled = false;
+const localSentIds = new Set<string>();
+const tweetStateMap = new WeakMap<Element, Record<string, unknown>>();
+const emojiRegex = /\p{RGI_Emoji}/v;
+const spamCharsRegex =
+  // eslint-disable-next-line no-misleading-character-class
+  /[\u02B0-\u02FF\u0F00-\u0FFF\u1D00-\u1D7F\u1D80-\u1DBF\u2070-\u209F\u2100-\u2BFF\uA980-\uA9DF\uAA00-\uAADF\u{13000}-\u{1342F}\u{1D400}-\u{1D7FF}]/v;
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => window.setTimeout(resolve, ms));
-
-function getVisibleText(element: Element | null): string {
-  return element?.textContent?.replace(/\s+/g, ' ').trim() || '';
+function isExtensionAlive(): boolean {
+  return Boolean(chrome.runtime?.id);
 }
 
-function parseCompactCount(value: string): number | undefined {
-  const normalized = value.replace(/,/g, '').trim();
-  const match = normalized.match(/^(\d+(?:\.\d+)?)([KMBkmb]|\u4e07|\u4ebf)?$/);
-  if (!match) return undefined;
-
-  const base = Number(match[1]);
-  if (!Number.isFinite(base)) return undefined;
-
-  const unit = match[2]?.toLowerCase();
-  const multiplier =
-    unit === 'k'
-      ? 1_000
-      : unit === 'm'
-        ? 1_000_000
-        : unit === 'b'
-          ? 1_000_000_000
-          : unit === '\u4e07'
-            ? 10_000
-            : unit === '\u4ebf'
-              ? 100_000_000
-              : 1;
-
-  return Math.round(base * multiplier);
+function matchesBlocklist(text: string): boolean {
+  if (blockRegexes.length === 0) return false;
+  return blockRegexes.some((regex) => regex.test(text));
 }
 
-function extractFollowers(container: Element | Document = document): Pick<XUserProfile, 'followersCount' | 'followersText'> {
-  const root = container instanceof Document ? container.body : container;
-  const followerLinks = Array.from(
-    root.querySelectorAll<HTMLAnchorElement>('a[href$="/followers"], a[href$="/verified_followers"]'),
-  );
-  const linkText = followerLinks.map((link) => getVisibleText(link)).find(Boolean);
-  const sourceText = linkText || getVisibleText(root);
+function matchesAutoBlocklist(text: string): boolean {
+  if (autoBlockRegexes.length === 0) return false;
+  return autoBlockRegexes.some((regex) => regex.test(text));
+}
 
-  const patterns = [
-    /([\d,.]+(?:[KMBkmb])?)\s+(?:Followers|followers)\b/,
-    /([\d,.]+(?:\u4e07|\u4ebf)?)\s*(?:\u7c89\u4e1d|\u4f4d\u5173\u6ce8\u8005|\u5173\u6ce8\u8005)/,
-  ];
+function buildTrieRegex(plainKeywords: string[]): RegExp | null {
+  if (!plainKeywords?.length) return null;
+  const seen = new Set<string>();
+  const MAX_KEYWORD_LENGTH = 1000;
+  for (const kw of plainKeywords) {
+    if (typeof kw !== 'string') continue;
+    const cleaned = kw.trim().toLowerCase();
+    if (cleaned && cleaned.length <= MAX_KEYWORD_LENGTH) seen.add(cleaned);
+  }
+  if (!seen.size) return null;
+  const sorted = Array.from(seen).sort((a, b) => a.length - b.length);
 
-  for (const pattern of patterns) {
-    const match = sourceText.match(pattern);
-    if (match?.[1]) {
+  const pruned: string[] = [];
+  for (const kw of sorted) {
+    if (!pruned.some((p) => kw.includes(p))) pruned.push(kw);
+  }
+
+  const root: Record<string, unknown> = {};
+  for (const kw of pruned) {
+    let node = root;
+    for (const ch of kw) {
+      const next = (node[ch] ??= {}) as Record<string, unknown>;
+      node = next;
+    }
+  }
+
+  const escapeChar = (c: string) => (/[.*+?^${}()|[\]\\]/.test(c) ? `\\${c}` : c);
+  function stringify(node: Record<string, unknown>): string {
+    const keys = Object.keys(node);
+    if (!keys.length) return '';
+    const branches = keys.map((k) => escapeChar(k) + stringify(node[k] as Record<string, unknown>));
+    return branches.length > 1 ? `(?:${branches.join('|')})` : branches[0];
+  }
+
+  return new RegExp(stringify(root), 'iu');
+}
+
+function buildRegexes(keywords: string[]): RegExp[] {
+  if (!keywords || keywords.length === 0) return [];
+  const plainKeywords: string[] = [];
+  const customRegexes: RegExp[] = [];
+
+  for (const kw of keywords) {
+    const match = kw.startsWith('/')
+      ? kw.match(/^\/(?<pattern>.+)\/(?<flags>[a-zA-Z]*)$/)
+      : null;
+    if (match) {
+      try {
+        const cleanFlags = (match.groups?.flags ?? '').replace(/[gy]/g, '');
+        customRegexes.push(new RegExp(match.groups?.pattern ?? '', cleanFlags));
+      } catch (e) {
+        console.warn('[X-Blocker] Invalid regex ignored:', kw, e);
+      }
+    } else {
+      plainKeywords.push(kw);
+    }
+  }
+
+  const regexes: RegExp[] = [];
+  if (plainKeywords.length > 0) {
+    const trieRegex = buildTrieRegex(plainKeywords);
+    if (trieRegex) regexes.push(trieRegex);
+  }
+  if (customRegexes.length > 0) {
+    regexes.push(...customRegexes);
+  }
+  return regexes;
+}
+
+async function mergeKeywords(): Promise<void> {
+  try {
+    const items = await chrome.storage.local.get(
+      getStorageDefaults(
+        'keywords',
+        'cloudEnabled',
+        'cloudKeywords',
+        'autoBlockKeywords',
+        'disabledCloudKeywords',
+      ),
+    );
+
+    const userKws = parseKeywords((items.keywords as string) ?? '');
+    const disabledCloudKws = (items.disabledCloudKeywords as string[]) ?? [];
+    const disabledSet = new Set(disabledCloudKws);
+    const cloudKws = items.cloudEnabled
+      ? parseKeywords((items.cloudKeywords as string) ?? '').filter((k) => !disabledSet.has(k))
+      : [];
+
+    const blockKeywordsSet = new Set([...cloudKws, ...userKws]);
+    const blockKeywords = Array.from(blockKeywordsSet);
+    const rawAutoBlockKws = (items.autoBlockKeywords as string[]) ?? [];
+    const autoBlockKws = rawAutoBlockKws.filter((k) => blockKeywordsSet.has(k));
+
+    const newKey = `${blockKeywords.join('\n')}|AUTO:|${autoBlockKws.join('\n')}`;
+    if (newKey === lastKeywordsKey) return;
+    lastKeywordsKey = newKey;
+
+    blockRegexes = buildRegexes(blockKeywords);
+    autoBlockRegexes = buildRegexes(autoBlockKws);
+  } catch (e) {
+    console.error('[X-Blocker] mergeKeywords error:', e);
+  }
+}
+
+function getEnclosingTweetIfRelevant(target: Node | null): Element | null {
+  let curr = target?.nodeType === Node.ELEMENT_NODE ? (target as Element) : (target?.parentElement ?? null);
+  let isRelevant = false;
+  while (curr && curr !== document.body) {
+    const testId = curr.getAttribute('data-testid');
+    if (testId === 'tweetText' || testId === 'User-Name') {
+      isRelevant = true;
+    } else if (testId === 'cellInnerDiv') {
+      return isRelevant ? curr : null;
+    }
+    curr = curr.parentElement;
+  }
+  return null;
+}
+
+function getTweetTextForKeywords(node: Element | null): string {
+  if (!node) return '';
+  let text = '';
+  const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+  let currentNode: Node | null = walker.currentNode;
+  while (currentNode) {
+    if (currentNode.nodeType === Node.TEXT_NODE) {
+      text += currentNode.textContent ?? '';
+    } else if (currentNode.nodeType === Node.ELEMENT_NODE) {
+      const el = currentNode as HTMLElement;
+      const tagName = el.tagName.toLowerCase();
+      if (['br', 'div', 'p'].includes(tagName)) {
+        if (text && !text.endsWith('\n')) text += '\n';
+      } else if (tagName === 'img') {
+        const imgEl = el as HTMLImageElement;
+        if (!imgEl.alt) {
+          // no alt text
+        } else {
+        let altText = imgEl.alt;
+        if (
+          imgEl.src &&
+          (imgEl.src.includes('emoji') || imgEl.src.includes('twemoji')) &&
+          !altText.endsWith('\uFE0F')
+        ) {
+          if (altText.length <= 2) {
+            altText += '\uFE0F';
+          }
+        }
+        text += altText;
+        }
+      }
+    }
+    currentNode = walker.nextNode();
+  }
+  return text;
+}
+
+function hasEmoji(node: Element | null): boolean {
+  if (!node) return false;
+
+  if (emojiRegex.test(node.textContent ?? '')) return true;
+
+  return Array.from(node.querySelectorAll('img')).some((img) => {
+    const src = (img as HTMLImageElement).src ?? '';
+    if (src.includes('emoji') || src.includes('twemoji')) return true;
+    return emojiRegex.test(img.alt ?? '');
+  });
+}
+
+function getTweetStatusInfo(
+  tweet: Element,
+  pageStatusId: string | null,
+): { id: string | null; isMainTweet: boolean } {
+  for (const timeEl of Array.from(tweet.querySelectorAll('time'))) {
+    const href = timeEl.closest('a')?.getAttribute('href') ?? '';
+    const m = href.match(/\/status\/(\d+)/iv);
+    if (m) {
       return {
-        followersCount: parseCompactCount(match[1]),
-        followersText: match[0],
+        id: m[1],
+        isMainTweet: pageStatusId ? m[1] === pageStatusId : false,
+      };
+    }
+  }
+  return { id: null, isMainTweet: false };
+}
+
+function getPageContext(): { pageStatusId: string | null; isPhotoVideoOverlay: boolean } {
+  const urlMatch = window.location.pathname.match(/\/status\/(\d+)/iv);
+  return {
+    pageStatusId: urlMatch ? urlMatch[1] : null,
+    isPhotoVideoOverlay: /\/status\/\d+\/(?:photo|video)\//iv.test(window.location.pathname),
+  };
+}
+
+function resolveStatusPage(tweet: Element, pageContext: { pageStatusId: string | null; isPhotoVideoOverlay: boolean }): boolean {
+  if (pageContext.isPhotoVideoOverlay) {
+    if (tweet.closest('[role="dialog"]') !== null) return true;
+    const state = tweetStateMap.get(tweet);
+    if (state && state.isStatusPage !== undefined) return Boolean(state.isStatusPage);
+    return false;
+  }
+  return Boolean(pageContext.pageStatusId);
+}
+
+function hasGrokCard(tweet: Element): boolean {
+  if (!tweet) return false;
+  return Boolean(tweet.querySelector('a[href*="/i/grok/share"], meta[content*="/i/grok/share"]'));
+}
+
+interface SpamDecision {
+  isSpam: boolean;
+  isAutoBlock?: boolean;
+  blockReason?: string;
+  userName?: string;
+  stableHandle?: string;
+  displayName?: string;
+}
+
+function detectSpam(
+  tweet: Element,
+  textNode: Element | null,
+  userNode: Element | null,
+  rawTweetText: string,
+  userName: string,
+  isStatusPage: boolean,
+  isMainTweet: boolean,
+): SpamDecision {
+  const tweetBody = rawTweetText.replaceAll(invisibleCharsRegex, '');
+  let stableHandle = '';
+  let displayName = '';
+
+  const handleLink = userNode?.querySelector('a[href^="/"]');
+  if (handleLink) {
+    const rawHref = handleLink.getAttribute('href') || '';
+    stableHandle = extractCleanScreenName(rawHref);
+    displayName = getTweetTextForKeywords(handleLink).replaceAll(invisibleCharsRegex, '').trim();
+  }
+
+  if (stableHandle && whitelistSet.has(stableHandle)) {
+    return { isSpam: false };
+  }
+
+  if (blockGrok && hasGrokCard(tweet)) {
+    return {
+      isSpam: true,
+      isAutoBlock: false,
+      blockReason: 'Grok屏蔽',
+      userName,
+      stableHandle,
+      displayName,
+    };
+  }
+
+  if (isStatusPage && !isMainTweet) {
+    if (blockEmoji && textNode && hasEmoji(textNode)) {
+      return {
+        isSpam: true,
+        isAutoBlock: false,
+        blockReason: '表情屏蔽',
+        userName,
+        stableHandle,
+        displayName,
+      };
+    }
+    if (blockSpecialChars && textNode && spamCharsRegex.test(textNode.textContent ?? '')) {
+      return {
+        isSpam: true,
+        isAutoBlock: false,
+        blockReason: '特殊字符屏蔽',
+        userName,
+        stableHandle,
+        displayName,
       };
     }
   }
 
-  return {};
-}
+  const cleanUserName = userName
+    ? userName.replaceAll(/[\s_.\-]+/gv, '').replaceAll(invisibleCharsRegex, '')
+    : '';
 
-function extractAvatarUrl(container: Element | Document = document): string | undefined {
-  const root = container instanceof Document ? container.body : container;
-  const avatar =
-    root.querySelector<HTMLImageElement>('img[src*="profile_images"]') ||
-    root.querySelector<HTMLImageElement>('[data-testid="UserAvatar-Container"] img') ||
-    root.querySelector<HTMLImageElement>('img[alt][src]');
-
-  return avatar?.src;
-}
-
-function extractUsernameFromHref(href: string): string | undefined {
-  try {
-    const url = new URL(href, location.origin);
-    const firstSegment = url.pathname.split('/').filter(Boolean)[0]?.replace(/^@+/, '');
-    if (!firstSegment) return undefined;
-    if (RESERVED_PATHS.has(firstSegment.toLowerCase())) return undefined;
-    if (!/^[A-Za-z0-9_]{1,15}$/.test(firstSegment)) return undefined;
-    return firstSegment;
-  } catch {
-    return undefined;
-  }
-}
-
-function upsertUser(
-  users: Map<string, XUserProfile>,
-  username: string,
-  patch: Partial<XUserProfile>,
-): void {
-  const normalizedUsername = username.replace(/^@+/, '');
-  const id = normalizedUsername.toLowerCase();
-  const existing = users.get(id);
-  users.set(id, {
-    id,
-    username: normalizedUsername,
-    displayName: patch.displayName || existing?.displayName,
-    bio: patch.bio || existing?.bio,
-    postContent: Array.from(new Set([...(existing?.postContent ?? []), ...(patch.postContent ?? [])])),
-    followersCount: patch.followersCount ?? existing?.followersCount,
-    followersText: patch.followersText || existing?.followersText,
-    avatarUrl: patch.avatarUrl || existing?.avatarUrl,
-    profileUrl: `https://x.com/${normalizedUsername}`,
-    discoveredAt: existing?.discoveredAt ?? Date.now(),
-  });
-}
-
-function collectProfileHeaderUser(users: Map<string, XUserProfile>): void {
-  const username = extractUsernameFromHref(location.pathname);
-  if (!username) return;
-
-  const bio = getVisibleText(document.querySelector('[data-testid="UserDescription"]'));
-  const displayName =
-    getVisibleText(document.querySelector('[data-testid="UserName"] span')) ||
-    getVisibleText(document.querySelector('[data-testid="UserName"]')) ||
-    username;
-
-  upsertUser(users, username, {
-    displayName,
-    bio,
-    avatarUrl: extractAvatarUrl(document),
-    ...extractFollowers(document),
-  });
-}
-
-function collectFromContainer(users: Map<string, XUserProfile>, container: Element): void {
-  const text = getVisibleText(container);
-  const links = Array.from(container.querySelectorAll<HTMLAnchorElement>('a[href]'));
-  const usernames = links
-    .map((link) => extractUsernameFromHref(link.getAttribute('href') || ''))
-    .filter((username): username is string => Boolean(username));
-
-  for (const username of Array.from(new Set(usernames))) {
-    const userNameBlock =
-      container.querySelector('[data-testid="User-Name"]') ||
-      container.querySelector('[data-testid="UserName"]');
-    const displayName = getVisibleText(userNameBlock?.querySelector('span') ?? userNameBlock);
-    const bio =
-      getVisibleText(container.querySelector('[data-testid="UserDescription"]')) ||
-      getVisibleText(container.querySelector('[dir="auto"]'));
-
-    upsertUser(users, username, {
+  if (matchesAutoBlocklist(tweetBody)) {
+    return {
+      isSpam: true,
+      isAutoBlock: true,
+      blockReason: '内容屏蔽',
+      userName,
+      stableHandle,
       displayName,
-      bio,
-      avatarUrl: extractAvatarUrl(container),
-      ...extractFollowers(container),
-      postContent: text ? [text] : [],
-    });
+    };
+  }
+
+  if (
+    checkUsername &&
+    userName &&
+    (matchesAutoBlocklist(cleanUserName) ||
+      matchesAutoBlocklist(userName) ||
+      matchesAutoBlocklist(stableHandle))
+  ) {
+    return {
+      isSpam: true,
+      isAutoBlock: true,
+      blockReason: '昵称屏蔽',
+      userName,
+      stableHandle,
+      displayName,
+    };
+  }
+
+  if (matchesBlocklist(tweetBody)) {
+    return {
+      isSpam: true,
+      isAutoBlock: false,
+      blockReason: '内容屏蔽',
+      userName,
+      stableHandle,
+      displayName,
+    };
+  }
+
+  if (
+    checkUsername &&
+    userName &&
+    (matchesBlocklist(cleanUserName) ||
+      matchesBlocklist(userName) ||
+      matchesBlocklist(stableHandle))
+  ) {
+    return {
+      isSpam: true,
+      isAutoBlock: false,
+      blockReason: '昵称屏蔽',
+      userName,
+      stableHandle,
+      displayName,
+    };
+  }
+
+  return { isSpam: false };
+}
+
+function filterTweets(specificTweets: Element[] | null = null): void {
+  if (!isExtensionAlive()) return;
+
+  const tweets: Element[] =
+    specificTweets || Array.from(document.querySelectorAll('[data-testid="cellInnerDiv"]'));
+  if (!tweets || tweets.length === 0) return;
+
+  const pendingSpam: Array<Record<string, unknown>> = [];
+  const pageContext = getPageContext();
+
+  for (const tweet of tweets) {
+    const userNode = tweet.querySelector('[data-testid="User-Name"]');
+    const textNode = tweet.querySelector('[data-testid="tweetText"]');
+    const isStatusPage = resolveStatusPage(tweet, pageContext);
+
+    let state = tweetStateMap.get(tweet);
+    if (!state) {
+      state = {};
+      tweetStateMap.set(tweet, state);
+    }
+
+    let logicalPageStatusId = pageContext.pageStatusId;
+    if (pageContext.isPhotoVideoOverlay && tweet.closest('[role="dialog"]') === null) {
+      logicalPageStatusId = (state.pageStatusId as string) ?? pageContext.pageStatusId;
+    } else {
+      state.pageStatusId = pageContext.pageStatusId;
+    }
+    state.isStatusPage = isStatusPage;
+
+    const rawTweetText = textNode ? getTweetTextForKeywords(textNode) : '';
+    const rawUserName = userNode ? getTweetTextForKeywords(userNode) : '';
+    const hasGrok = blockGrok ? hasGrokCard(tweet) : false;
+
+    const quickHash = `${rawTweetText}|${rawUserName}|${filterVersion}|${isStatusPage}|${logicalPageStatusId || ''}|${hasGrok}|${highlightMode}`;
+    if (state.quickHash === quickHash) {
+      if (state.isSpam) {
+        tweet.classList.remove('x-comment-blocker-hidden-reply');
+        if (highlightMode) {
+          tweet.classList.remove('x-comment-blocker-hidden');
+          tweet.classList.add('xshield-hit');
+        } else {
+          tweet.classList.remove('xshield-hit');
+          tweet.classList.add('x-comment-blocker-hidden');
+        }
+      } else {
+        tweet.classList.remove('x-comment-blocker-hidden', 'xshield-hit');
+      }
+      continue;
+    }
+
+    if (tweet.closest('[aria-hidden="true"]')) continue;
+    state.quickHash = quickHash;
+
+    let shouldCheck =
+      filterEnabled && (blockRegexes.length > 0 || blockEmoji || blockSpecialChars || blockGrok);
+    if (shouldCheck && onlyComments && !isStatusPage) shouldCheck = false;
+
+    let isMainTweet = false;
+    let tweetId: string | null = null;
+    if (shouldCheck) {
+      const statusInfo = getTweetStatusInfo(tweet, logicalPageStatusId || null);
+      tweetId = statusInfo.id;
+
+      if (isStatusPage && logicalPageStatusId) {
+        isMainTweet = statusInfo.isMainTweet;
+        if (!tweet.querySelector('article')) {
+          state.quickHash = '';
+          continue;
+        }
+      }
+    }
+
+    if (shouldCheck && onlyComments && isMainTweet) shouldCheck = false;
+
+    const spamResult = shouldCheck
+      ? detectSpam(
+          tweet,
+          textNode,
+          userNode,
+          rawTweetText,
+          rawUserName,
+          isStatusPage,
+          isMainTweet,
+        )
+      : null;
+    const isSpam = spamResult?.isSpam ?? false;
+
+    state.isSpam = isSpam;
+    if (isSpam) {
+      const { isAutoBlock, blockReason, userName, stableHandle, displayName } = spamResult as SpamDecision;
+      tweet.classList.remove('x-comment-blocker-hidden-reply');
+      if (highlightMode) {
+        tweet.classList.remove('x-comment-blocker-hidden');
+        tweet.classList.add('xshield-hit');
+      } else {
+        tweet.classList.remove('xshield-hit');
+        tweet.classList.add('x-comment-blocker-hidden');
+      }
+      let normalizedBody = rawTweetText
+        .replaceAll(invisibleCharsRegex, '')
+        .replaceAll(/\s+/gv, ' ')
+        .trim();
+
+      if (blockReason === 'Grok屏蔽') {
+        const grokMeta = tweet.querySelector(
+          'a[href*="/i/grok/share"], meta[content*="/i/grok/share"]',
+        );
+        const grokLink = grokMeta ? grokMeta.getAttribute('content') || (grokMeta as HTMLAnchorElement).href : '';
+        if (grokLink) {
+          normalizedBody = normalizedBody ? `${normalizedBody}\n${grokLink}` : grokLink;
+        }
+      }
+
+      const uniqueId = tweetId ?? `${normalizedBody}|${stableHandle}`;
+
+      if (!localSentIds.has(uniqueId)) {
+        localSentIds.add(uniqueId);
+        if (localSentIds.size > 5000) {
+          const toDelete = Array.from(localSentIds).slice(0, 500);
+          for (const val of toDelete) {
+            localSentIds.delete(val);
+          }
+        }
+
+        pendingSpam.push({
+          id: uniqueId,
+          text: normalizedBody,
+          user: stableHandle || userName,
+          displayName: displayName || '',
+          reason: blockReason,
+          time: Date.now(),
+          isAutoBlock: isAutoBlock,
+        });
+      }
+    } else {
+      const prev = tweet.previousElementSibling;
+      let isHiddenReply = false;
+
+      if (
+        prev &&
+        (prev.classList.contains('x-comment-blocker-hidden') ||
+          prev.classList.contains('x-comment-blocker-hidden-reply'))
+      ) {
+        const hasThreadLine =
+          Boolean(tweet.querySelector('div[style*="width: 2px"]')) ||
+          Boolean(tweet.querySelector('[class*="r-1d2f490"]'));
+        const hasReplyingTo = Boolean(tweet.querySelector('div[dir="ltr"] a[href^="/"]'));
+        if (hasThreadLine || hasReplyingTo) {
+          isHiddenReply = true;
+        }
+      }
+
+      if (isHiddenReply) {
+        tweet.classList.add('x-comment-blocker-hidden-reply');
+      } else {
+        tweet.classList.remove('x-comment-blocker-hidden-reply');
+      }
+
+      tweet.classList.remove('x-comment-blocker-hidden', 'xshield-hit');
+    }
+  }
+
+  if (pendingSpam.length > 0) {
+    try {
+      void chrome.runtime.sendMessage({ action: 'recordSpam', items: pendingSpam }).catch(() => {});
+    } catch {
+      // Extension context gone; nothing to do.
+    }
   }
 }
 
-function collectVisibleUsers(): XUserProfile[] {
-  const users = new Map<string, XUserProfile>();
-  collectProfileHeaderUser(users);
-
-  const containers = document.querySelectorAll(
-    'article, [data-testid="UserCell"], [data-testid="cellInnerDiv"]',
-  );
-  containers.forEach((container) => collectFromContainer(users, container));
-
-  return Array.from(users.values());
-}
-
-function ensureHighlightStyle(): void {
-  if (document.getElementById('xshield-highlight-style')) return;
-
-  const style = document.createElement('style');
-  style.id = 'xshield-highlight-style';
-  style.textContent = `
-    .xshield-rule-hit {
-      background: #fff7cc !important;
-      box-shadow: inset 4px 0 0 #f4c430 !important;
-      transition: background-color 160ms ease;
-    }
-  `;
-  document.documentElement.appendChild(style);
-}
-
-function getUsernamesFromContainer(container: Element): string[] {
-  return Array.from(container.querySelectorAll<HTMLAnchorElement>('a[href]'))
-    .map((link) => extractUsernameFromHref(link.getAttribute('href') || ''))
-    .filter((username): username is string => Boolean(username))
-    .map((username) => username.toLowerCase());
-}
-
-function highlightMatchedUsers(usernames: string[]): void {
-  ensureHighlightStyle();
-  const matched = new Set(usernames.map((username) => username.replace(/^@+/, '').toLowerCase()));
-  const containers = document.querySelectorAll<HTMLElement>(
-    'article, [data-testid="UserCell"], [data-testid="cellInnerDiv"]',
-  );
-
-  containers.forEach((container) => {
-    const hit = getUsernamesFromContainer(container).some((username) => matched.has(username));
-    container.classList.toggle('xshield-rule-hit', hit);
+function scheduleFilter(): void {
+  if (!isExtensionAlive()) return;
+  if (filterTimer) cancelAnimationFrame(filterTimer);
+  filterTimer = requestAnimationFrame(() => {
+    filterTimer = null;
+    filterTweets();
   });
 }
 
-async function notifyVisibleUsers(users: XUserProfile[]): Promise<void> {
-  const message: RuntimeMessage<XUserProfile[]> = {
-    source: 'xshield',
-    type: 'VISIBLE_USERS_COLLECTED',
-    payload: users,
-  };
-
-  window.postMessage(message, '*');
+async function init(): Promise<void> {
   try {
-    const response = await chrome.runtime.sendMessage<RuntimeMessage<XUserProfile[]>, MatchedUsersPayload>(message);
-    highlightMatchedUsers(response?.usernames ?? []);
-  } catch {
-    // The extension may have been reloaded while an old content script is still alive.
-  }
-}
-
-async function collectVisibleUsersWithScroll(scrollPasses = 0): Promise<XUserProfile[]> {
-  const users = new Map<string, XUserProfile>();
-
-  for (let index = 0; index <= scrollPasses; index += 1) {
-    for (const user of collectVisibleUsers()) {
-      upsertUser(users, user.username, user);
-    }
-
-    if (index < scrollPasses) {
-      window.scrollBy({ top: Math.max(600, Math.floor(window.innerHeight * 0.85)), behavior: 'smooth' });
-      await sleep(900);
-    }
-  }
-
-  return Array.from(users.values());
-}
-
-let timer: number | undefined;
-
-function sendVisibleUsers(): void {
-  window.clearTimeout(timer);
-  timer = window.setTimeout(() => {
-    const users = collectVisibleUsers();
-    if (users.length === 0) return;
-
-    void notifyVisibleUsers(users);
-  }, 500);
-}
-
-function findButtonByText(patterns: RegExp[]): HTMLElement | undefined {
-  const buttons = Array.from(document.querySelectorAll<HTMLElement>('button, [role="button"]'));
-  return buttons.find((button) => patterns.some((pattern) => pattern.test(getVisibleText(button))));
-}
-
-async function waitUntil(
-  predicate: () => boolean,
-  timeoutMs = 10000,
-  intervalMs = 250,
-): Promise<boolean> {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    if (predicate()) return true;
-    await sleep(intervalMs);
-  }
-  return predicate();
-}
-
-function getCurrentProfileUsername(): string {
-  const firstPath = location.pathname.split('/').filter(Boolean)[0] ?? '';
-  return decodeURIComponent(firstPath).replace(/^@+/, '').toLowerCase();
-}
-
-function isProfileUnavailable(): boolean {
-  const text = getVisibleText(document.body);
-  return /This account doesn.t exist|Account suspended|Something went wrong/i.test(text);
-}
-
-function isAlreadyBlocked(normalized: string): boolean {
-  const escaped = normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const patterns = [
-    /^Blocked$/i,
-    new RegExp(`^Blocked @?${escaped}$`, 'i'),
-    /^Unblock$/i,
-    new RegExp(`^Unblock @?${escaped}$`, 'i'),
-    /\u5df2\u5c4f\u853d|\u53d6\u6d88\u5c4f\u853d/,
-  ];
-  return Boolean(
-    document.querySelector('[data-testid="unblock"]') ||
-      findButtonByText(patterns),
-  );
-}
-
-function getProfileActionMenuButton(): HTMLElement | undefined {
-  const moreText = String.fromCharCode(0x66f4, 0x591a);
-  const buttons = Array.from(document.querySelectorAll<HTMLElement>('button, [role="button"]'));
-  return (
-    document.querySelector<HTMLElement>('[data-testid="userActions"]') ||
-    buttons.find((button) => {
-      const label = button.getAttribute('aria-label') || '';
-      return /More|User actions|更多|操作/i.test(label) || label.includes(moreText);
-    }) ||
-    buttons.find((button) => getVisibleText(button) === '...')
-  );
-}
-
-function findBlockMenuItem(normalized: string): HTMLElement | undefined {
-  const escaped = normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const menuItems = Array.from(
-    document.querySelectorAll<HTMLElement>('[role="menuitem"], [role="button"], button, div[dir="ltr"]'),
-  );
-  return menuItems.find((item) => {
-    const text = getVisibleText(item);
-    if (!text) return false;
-    if (/Unblock|取消屏蔽|已屏蔽/i.test(text)) return false;
-    return (
-      new RegExp(`\\bBlock\\s*@?${escaped}\\b`, 'i').test(text) ||
-      /^Block\b/i.test(text) ||
-      /\u5c4f\u853d|\u62c9\u9ed1|\u963b\u6b62/.test(text)
+    const items = await chrome.storage.local.get(
+      getStorageDefaults(
+        'checkUsername',
+        'onlyComments',
+        'blockSpecialChars',
+        'blockEmoji',
+        'blockGrok',
+        'enabled',
+        'whitelist',
+        'highlightMode',
+      ),
     );
-  });
-}
 
-function findConfirmBlockButton(): HTMLElement | undefined {
-  const dialogs = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"], [aria-modal="true"]'));
-  const roots = dialogs.length > 0 ? dialogs : [document.body];
-  for (const root of roots) {
-    const buttons = Array.from(root.querySelectorAll<HTMLElement>('button, [role="button"]'));
-    const match = buttons.find((button) => {
-      const text = getVisibleText(button);
-      return /^Block$/i.test(text) || /\u5c4f\u853d|\u62c9\u9ed1|\u963b\u6b62/.test(text);
+    checkUsername = Boolean(items.checkUsername);
+    onlyComments = Boolean(items.onlyComments);
+    blockSpecialChars = Boolean(items.blockSpecialChars);
+    blockEmoji = Boolean(items.blockEmoji);
+    blockGrok = Boolean(items.blockGrok);
+    filterEnabled = Boolean(items.enabled);
+    highlightMode = Boolean(items.highlightMode);
+    whitelistSet = new Set((items.whitelist as string[]) ?? []);
+
+    await mergeKeywords();
+    filterTweets();
+
+    const pendingTweets = new Set<Element>();
+
+    const observer = new MutationObserver((mutations) => {
+      if (!isExtensionAlive()) {
+        observer.disconnect();
+        return;
+      }
+
+      for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+          if (node.nodeType !== Node.ELEMENT_NODE) continue;
+          const el = node as Element;
+          if (el.getAttribute('data-testid') === 'cellInnerDiv') {
+            pendingTweets.add(el);
+          } else if (el.firstElementChild) {
+            for (const inner of Array.from(el.querySelectorAll('[data-testid="cellInnerDiv"]'))) {
+              pendingTweets.add(inner);
+            }
+          }
+        }
+
+        const tweet = getEnclosingTweetIfRelevant(mutation.target);
+        if (tweet) {
+          pendingTweets.add(tweet);
+        }
+      }
+
+      if (pendingTweets.size > 0 && !observerFlushScheduled) {
+        observerFlushScheduled = true;
+        queueMicrotask(() => {
+          observerFlushScheduled = false;
+          if (pendingTweets.size > 0) {
+            filterTweets(Array.from(pendingTweets));
+            pendingTweets.clear();
+          }
+        });
+      }
     });
-    if (match) return match;
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+
+    // X renders cell skeletons first and fills text afterwards (characterData
+    // mutations). Schedule a few delayed full re-scans so tweets that hydrated
+    // after the initial pass still get evaluated without needing a refresh.
+    for (const delay of [600, 1600, 3200]) {
+      setTimeout(() => {
+        if (isExtensionAlive()) filterTweets();
+      }, delay);
+    }
+  } catch (e) {
+    console.error('[X-Blocker] init error:', e);
   }
-  return undefined;
 }
 
-async function realBlockUser(username: string): Promise<RealBlockUserResult> {
-  const normalized = username.replace(/^@+/, '');
-  if (!normalized) return { success: false, error: 'Missing username' };
+chrome.runtime.onMessage.addListener((message: Record<string, unknown>) => {
+  if (!isExtensionAlive()) return;
+  if (message.action === 'removeLocalSentId' && message.id) {
+    localSentIds.delete(String(message.id));
+    return;
+  }
+  if (message.action === 'removeLocalSentIds' && Array.isArray(message.ids)) {
+    for (const id of message.ids) localSentIds.delete(String(id));
+    return;
+  }
+  if (message.action === 'clearLocalSentIds') {
+    localSentIds.clear();
+    return;
+  }
+});
 
-  if (getCurrentProfileUsername() !== normalized.toLowerCase()) {
-    location.assign(`https://x.com/${normalized}?xshield_blocker=1`);
-    const reachedProfile = await waitUntil(
-      () => getCurrentProfileUsername() === normalized.toLowerCase(),
-      12000,
-    );
-    if (!reachedProfile) {
-      return { success: false, error: `Could not navigate to @${normalized} profile` };
-    }
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !isExtensionAlive()) return;
+
+  let needsFilter = false;
+
+  if (changes.enabled) {
+    filterEnabled = Boolean(changes.enabled.newValue);
+    needsFilter = true;
+  }
+  if (changes.checkUsername) {
+    checkUsername = Boolean(changes.checkUsername.newValue);
+    needsFilter = true;
+  }
+  if (changes.onlyComments) {
+    onlyComments = Boolean(changes.onlyComments.newValue);
+    needsFilter = true;
+  }
+  if (changes.blockEmoji) {
+    blockEmoji = Boolean(changes.blockEmoji.newValue);
+    needsFilter = true;
+  }
+  if (changes.blockGrok) {
+    blockGrok = Boolean(changes.blockGrok.newValue);
+    needsFilter = true;
+  }
+  if (changes.blockSpecialChars) {
+    blockSpecialChars = Boolean(changes.blockSpecialChars.newValue);
+    needsFilter = true;
+  }
+  if (changes.whitelist) {
+    whitelistSet = new Set((changes.whitelist.newValue as string[]) ?? []);
+    needsFilter = true;
+  }
+  if (changes.highlightMode) {
+    highlightMode = Boolean(changes.highlightMode.newValue);
+    needsFilter = true;
   }
 
-  const pageReady = await waitUntil(
-    () => Boolean(document.querySelector('[data-testid="primaryColumn"], main')) || isProfileUnavailable(),
-    15000,
-  );
-  if (!pageReady) {
-    return { success: false, error: `Timed out loading @${normalized} profile` };
+  if (
+    changes.keywords ||
+    changes.cloudEnabled ||
+    changes.cloudKeywords ||
+    changes.autoBlockKeywords ||
+    changes.disabledCloudKeywords
+  ) {
+    void mergeKeywords().then(() => {
+      filterVersion++;
+      scheduleFilter();
+    });
+  } else if (needsFilter) {
+    filterVersion++;
+    scheduleFilter();
   }
-  if (isProfileUnavailable()) {
-    return { success: false, error: `@${normalized} profile is unavailable` };
-  }
-  if (isAlreadyBlocked(normalized)) {
-    return { success: true, alreadyBlocked: true };
-  }
+});
 
-  const moreButton = getProfileActionMenuButton();
-  if (!moreButton) {
-    return { success: false, error: 'Could not find profile action menu' };
-  }
-
-  moreButton.click();
-  const menuOpened = await waitUntil(() => Boolean(findBlockMenuItem(normalized)), 5000, 200);
-  if (!menuOpened) {
-    return { success: false, error: 'Could not find block menu item after opening profile menu' };
-  }
-
-  const blockMenuItem = findBlockMenuItem(normalized);
-
-  if (!blockMenuItem) {
-    return { success: false, error: 'Could not find block menu item' };
-  }
-
-  blockMenuItem.click();
-  const confirmationReady = await waitUntil(() => Boolean(findConfirmBlockButton()), 5000, 200);
-  if (!confirmationReady) {
-    if (isAlreadyBlocked(normalized)) return { success: true, alreadyBlocked: true };
-    return { success: false, error: 'Could not find block confirmation dialog' };
-  }
-
-  const confirmButton = findConfirmBlockButton();
-  if (!confirmButton) {
-    return { success: false, error: 'Could not find block confirmation button' };
-  }
-
-  confirmButton.click();
-  const blocked = await waitUntil(() => isAlreadyBlocked(normalized), 5000, 250);
-  return blocked ? { success: true } : { success: false, error: `Clicked block for @${normalized}, but X did not show blocked state` };
-}
-
-function startObserver(): void {
-  if (!document.body) return;
-
-  const observer = new MutationObserver(sendVisibleUsers);
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true,
-  });
-  sendVisibleUsers();
-}
-
-chrome.runtime.onMessage.addListener(
-  (
-    message: RuntimeMessage<RealBlockUserPayload | CollectVisibleUsersPayload>,
-    _sender,
-    sendResponse: (response: RealBlockUserResult | XUserProfile[]) => void,
-  ) => {
-    if (message?.source !== 'xshield') return false;
-
-    if (message.type === 'COLLECT_VISIBLE_USERS') {
-      const payload = message.payload as CollectVisibleUsersPayload | undefined;
-      void collectVisibleUsersWithScroll(payload?.scrollPasses ?? 0).then((users) => {
-        sendResponse(users);
-        void notifyVisibleUsers(users);
-      });
-      return true;
-    }
-
-    if (message.type === 'XSHIELD_PING') {
-      sendResponse({ success: true });
-      return false;
-    }
-
-    if (message.type === 'REAL_BLOCK_USER') {
-      const payload = message.payload as RealBlockUserPayload | undefined;
-      void realBlockUser(payload?.username ?? '')
-        .then(sendResponse)
-        .catch((error: unknown) => sendResponse({ success: false, error: String(error) }));
-      return true;
-    }
-
-    return false;
-  },
-);
-
-startObserver();
+void init();

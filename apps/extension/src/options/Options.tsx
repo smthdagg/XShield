@@ -23,8 +23,7 @@ export function Options(): JSX.Element {
           <ShieldCheck aria-hidden />
           <h2>版本与许可证</h2>
           <p>
-            当前版本 v{PROJECT_INFO.version}，采用 {PROJECT_INFO.license} 许可证。候选用户、规则、队列和日志默认保存在本地
-            IndexedDB。
+            当前版本 v{PROJECT_INFO.version}，采用 {PROJECT_INFO.license} 许可证。自定义词库、云端词库、屏蔽历史与待拉黑队列均保存在本地。
           </p>
           <small>{PROJECT_INFO.copyright}</small>
         </article>

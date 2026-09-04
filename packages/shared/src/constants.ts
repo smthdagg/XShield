@@ -3,7 +3,7 @@ import type { BlockExecutorConfig, DetectionRule } from './types';
 export const DEFAULT_SCORE_THRESHOLD = 60;
 
 export const DEFAULT_BLOCK_EXECUTOR_CONFIG: BlockExecutorConfig = {
-  batchSize: 100,
+  batchSize: 30,
   intervalMinutes: 10,
   jitterSeconds: 60,
   maxRetries: 3,

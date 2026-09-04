@@ -165,17 +165,10 @@ export async function syncCloudKeywords(ownerRepo: string = DEFAULT_CLOUD_OWNER_
 
     const currentCloudList = parseKeywords((storageItems.cloudKeywords as string) ?? '');
 
-    if (isCDN && cloudList.length < currentCloudList.length) {
-      console.log(
-        `[X-Blocker] CDN cache (${cloudList.length} items) is older than local (${currentCloudList.length} items). Update aborted.`,
-      );
-      await browserApi.storage.local.set({
-        lastSyncTime: Date.now(),
-        syncStatus: 'ok',
-        syncError: '',
-      });
-      return true;
-    }
+    // No length-based staleness guard here: a shorter list is legitimate
+    // (e.g. the source repo was cleaned up), and the CDN fetch already
+    // carries a ?t= cache-buster so stale CDN responses are unlikely.
+
     const disabledCloudKeywords = (storageItems.disabledCloudKeywords as string[]) ?? [];
     const autoBlockKeywords = (storageItems.autoBlockKeywords as string[]) ?? [];
     const userKws = parseKeywords((storageItems.keywords as string) ?? '');

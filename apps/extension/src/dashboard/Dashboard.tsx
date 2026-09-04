@@ -577,8 +577,13 @@ export default function Dashboard() {
                         </button>
                       )}
                       {handle && (
-                        <button type="button" title={t.whitelist} onClick={() => addWhitelistFromRecord(handle)}>
-                          <CheckCircle2 size={16} />
+                        <button
+                          type="button"
+                          className="btn-whitelist"
+                          title={t.whitelist}
+                          onClick={() => addWhitelistFromRecord(handle)}
+                        >
+                          {t.whitelist}
                         </button>
                       )}
                       <button type="button" title={t.remove} onClick={() => removeRecord(item.id, item.time)}>

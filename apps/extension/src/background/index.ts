@@ -244,6 +244,21 @@ chrome.runtime.onInstalled.addListener(async () => {
   }
 });
 
+// Selected text → custom keyword list. The listener must live at the top
+// level (MV3 event delivery); the menu itself is (re)created on install.
+chrome.contextMenus.onClicked.addListener((info) => {
+  if (info.menuItemId !== 'addToBlocklist' || !info.selectionText) return;
+  const selection = info.selectionText.trim();
+  if (!selection || selection.length > 200) return;
+  void (async () => {
+    const items = await chrome.storage.local.get(getStorageDefaults('keywords'));
+    const existing = parseKeywords((items.keywords as string) ?? '');
+    const next = Array.from(new Set([...existing, ...parseKeywords(selection)]));
+    await chrome.storage.local.set({ keywords: next.join('\n') });
+    void addLog('info', 'settings', `右键添加屏蔽词：${selection.slice(0, 50)}`);
+  })();
+});
+
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM_NAME) {
     void doSync();
@@ -873,6 +888,15 @@ async function handleBlockUser(screenName: string, isBlock: boolean): Promise<Bl
     const cleanName = extractCleanScreenName(screenName);
     if (!cleanName) {
       return { success: false, reason: '无效的用户名', permanent: true };
+    }
+    // Whitelist chokepoint: checked at attempt time so a user whitelisted
+    // while their failed block was awaiting retry can never be blocked.
+    if (isBlock) {
+      const { whitelist } = await chrome.storage.local.get(getStorageDefaults('whitelist'));
+      if (((whitelist as string[]) ?? []).includes(cleanName)) {
+        void addLog('info', 'block', `跳过拉黑 @${cleanName}：白名单用户`);
+        return { success: false, reason: '白名单用户', permanent: true };
+      }
     }
     const cookie = await chrome.cookies.get({
       url: 'https://x.com',

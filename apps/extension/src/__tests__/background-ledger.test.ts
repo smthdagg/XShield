@@ -69,6 +69,7 @@ function makeChromeMock() {
     contextMenus: {
       removeAll: vi.fn((cb?: () => void) => cb?.()),
       create: vi.fn((_: unknown, cb?: () => void) => cb?.()),
+      onClicked: { addListener: vi.fn() },
     },
   };
 }
@@ -340,7 +341,6 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
       autoBlockQueue: ['future1', 'ready1'],
       autoBlockEta: { future1: Date.now() + 3_600_000 },
     });
-    const bg = await import('../background/index');
 
     await vi.waitFor(
       () => expect(storageData.blockedUsersOnX).toContain('ready1'),
@@ -394,10 +394,29 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
     expect(storageData.autoBlockQueue).toEqual([]);
   });
 
+  it('whitelist chokepoint: blockUserOnX refuses whitelisted users', async () => {
+    await bootstrap({ whitelist: ['pacifist1'] });
+    const res = (await dispatch({ action: 'blockUserOnX', screenName: 'pacifist1' })) as {
+      success?: boolean;
+      permanent?: boolean;
+    };
+    expect(res?.success).toBe(false);
+    expect(res?.permanent).toBe(true);
+    expect(storageData.blockedUsersOnX).toEqual([]);
+  });
+
+  it('whitelisted users never enter the pending queue', async () => {
+    await bootstrap({ whitelist: ['wluser1'] });
+    await dispatch({ action: 'recordSpam', items: [record('tweet-w1', 'wluser1', true)] });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(storageData.autoBlockQueue).toEqual([]);
+    expect(storageData.blockedUsersOnX).toEqual([]);
+  });
+
   it('whitelist update instantly purges queued members from the pending queue', async () => {
     await bootstrap({ autoBlockQueue: ['wl1', 'keep1'] });
-    const bg = await import('../background/index');
-    await bg.autoBlockManager.purgeWhitelistedFromQueue(['wl1']);
+    const { autoBlockManager } = await import('../background/index');
+    await autoBlockManager.purgeWhitelistedFromQueue(['wl1']);
     await vi.waitFor(
       () => expect(storageData.autoBlockQueue).toEqual(['keep1']),
       { timeout: 5000, interval: 25 },

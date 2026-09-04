@@ -160,10 +160,8 @@ export async function syncCloudKeywords(ownerRepo: string = DEFAULT_CLOUD_OWNER_
     const cloudList = parseKeywords(text);
 
     const storageItems = await browserApi.storage.local.get(
-      getStorageDefaults('disabledCloudKeywords', 'cloudKeywords'),
+      getStorageDefaults('disabledCloudKeywords'),
     );
-
-    const currentCloudList = parseKeywords((storageItems.cloudKeywords as string) ?? '');
 
     // No length-based staleness guard here: a shorter list is legitimate
     // (e.g. the source repo was cleaned up), and the CDN fetch already

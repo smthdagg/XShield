@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.5 - 2026-09-05
+
+### 插件化代码审计（serena）结论落地
+
+- LSP 诊断：5 个核心源文件零错误/零警告。
+- 符号引用核查：`markBlockedOnX` 唯一调用方为 `handleBlockUser`、队列移除点齐备、白名单清洗已接线。
+- 危险模式扫描：生产代码零 TODO/FIXME/debugger/`as any`；清理 1 处测试调试输出与 1 处历史强转（删除记录接口现在返回明确的 `{success:true}`）。
+- `getStorageDefaults` 全部 9 处调用的键均在默认表内，无幽灵键。
+
 ## 0.6.4 - 2026-09-05
 
 ### 全量审计修复

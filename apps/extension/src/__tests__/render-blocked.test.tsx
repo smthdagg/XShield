@@ -43,7 +43,6 @@ describe('blockedLog page renders', () => {
     await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
 
     const texts = Array.from(container.querySelectorAll('button')).map((b) => b.textContent ?? '');
-    console.log('ALL BUTTON TEXTS:', JSON.stringify(texts, null, 0));
     // every button must have non-empty text and no replacement chars
     for (const text of texts) {
       expect(text.length).toBeGreaterThan(0);

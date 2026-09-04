@@ -763,7 +763,8 @@ function handleRemoveSpamRecord(id: string, time?: number): Promise<{ success: b
         }
       }
     }
-  }) as unknown as Promise<{ success: boolean }>;
+    return { success: true };
+  });
 }
 
 /**

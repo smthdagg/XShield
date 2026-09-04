@@ -1056,18 +1056,36 @@ input[type="checkbox"] {
 .card-check { position: absolute; top: 10px; right: 10px; }
 .profile-card-actions {
   display: flex;
+  flex-wrap: wrap;
   width: 100%;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 6px 8px;
   margin-top: auto;
   padding-top: 8px;
   border-top: 1px dashed #e3e8e5;
 }
+/* Text buttons: override the fixed 36x36 icon-button sizing from the base
+   .row-actions button rule — Chinese labels must size the button, not get
+   squeezed inside a square. */
 .profile-card-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: auto;
+  height: auto;
+  min-width: 0;
+  min-height: 28px;
+  padding: 5px 10px;
+  font-size: 12px;
   white-space: nowrap;
   flex-shrink: 0;
   line-height: 1.2;
+}
+.profile-card-actions button svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
 }
 
 .btn-whitelist {

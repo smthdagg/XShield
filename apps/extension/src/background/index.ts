@@ -373,32 +373,46 @@ class AutoBlockManager {
 
     const { whitelist } = await chrome.storage.local.get(getStorageDefaults('whitelist'));
     const whitelistSet = new Set((whitelist as string[]) ?? []);
-    const validNames = Array.from(new Set(screenNames.map(extractCleanScreenName))).filter(
+    const candidates = Array.from(new Set(screenNames.map(extractCleanScreenName))).filter(
       (name) =>
         name &&
         /^[a-zA-Z0-9_]{1,15}$/v.test(name) &&
-        !this.queue.includes(name) &&
         !this.blockedUsersSet.has(name) &&
         !whitelistSet.has(name),
     );
+    const readyAt = options?.readyNow ? Date.now() : Date.now() + Math.max(0, this.graceMinutes) * 60_000;
 
-    if (validNames.length > 0) {
-      this.queue.push(...validNames);
-      const graceMs = Math.max(0, this.graceMinutes) * 60_000;
-      const readyAt = options?.readyNow || graceMs === 0 ? Date.now() : Date.now() + graceMs;
-      for (const name of validNames) {
-        if (this.eta[name] === undefined || readyAt < this.eta[name]) this.eta[name] = readyAt;
-      }
-      await this.saveState({ autoBlockQueue: this.queue, autoBlockEta: this.eta });
+    // Fresh entries always get the full grace window — a leftover stale eta
+    // from a previous life must never let a new trigger bypass it.
+    const freshNames = candidates.filter((name) => !this.queue.includes(name));
+    if (freshNames.length > 0) {
+      this.queue.push(...freshNames);
+      for (const name of freshNames) this.eta[name] = readyAt;
       const graceNote =
         options?.readyNow ? '立即执行' : `缓冲期 ${this.graceMinutes} 分钟，可在面板干预`;
-      void addLog('info', 'block', `${validNames.length} 个用户进入待拉黑（${graceNote}）`);
+      void addLog('info', 'block', `${freshNames.length} 个用户进入待拉黑（${graceNote}）`);
+    }
+
+    // Manual confirmation pulls already-pending entries forward to "now"
+    // (never pushes them back).
+    let accelerated = 0;
+    if (options?.readyNow) {
+      for (const name of candidates) {
+        if (this.queue.includes(name) && (this.eta[name] ?? 0) > Date.now()) {
+          this.eta[name] = Date.now();
+          accelerated++;
+        }
+      }
+    }
+
+    if (freshNames.length > 0 || accelerated > 0) {
+      await this.saveState({ autoBlockQueue: this.queue, autoBlockEta: this.eta });
     }
 
     // Always re-kick the drain: it also picks up entries whose grace window
     // expired while nothing else woke the manager.
     void this.process();
-    return validNames.length;
+    return freshNames.length;
   }
 
   async process(): Promise<void> {
@@ -719,7 +733,12 @@ function handleRemoveSpamRecord(id: string, time?: number): Promise<{ success: b
       await saveHistoryState();
 
       const remainingUsers = new Set(
-        (inMemoryHistory ?? [])
+        [
+          ...(inMemoryHistory ?? []),
+          // Records still waiting in the write batch count as remaining too —
+          // the flush will merge them into history shortly.
+          ...pendingSpamBatch,
+        ]
           .map((item) => extractCleanScreenName(item.user ?? ''))
           .filter(Boolean),
       );

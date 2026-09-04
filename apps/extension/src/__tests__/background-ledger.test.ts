@@ -296,6 +296,104 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
     expect(storageData.blockedUsersOnX).not.toContain('pending3');
   }, 20000);
 
+  it('manual confirmation accelerates an already-pending entry to now', async () => {
+    await bootstrap();
+    const bg = await import('../background/index');
+    const manager = bg.autoBlockManager;
+    manager.graceMinutes = 30;
+
+    await dispatch({ action: 'recordSpam', items: [record('tweet-a1', 'accel1', true)] });
+    await vi.waitFor(
+      () => expect(storageData.autoBlockQueue).toContain('accel1'),
+      { timeout: 5000, interval: 25 },
+    );
+    expect((storageData.autoBlockEta as Record<string, number>).accel1).toBeGreaterThan(Date.now());
+
+    // Bulk confirm skips the grace window for users already pending.
+    await dispatch({ action: 'blockAllHistoryUsers', users: ['accel1'] });
+    await vi.waitFor(
+      () => expect(storageData.blockedUsersOnX).toContain('accel1'),
+      { timeout: 5000, interval: 25 },
+    );
+    expect(storageData.autoBlockQueue).toEqual([]);
+  });
+
+  it('fresh trigger overwrites a stale expired eta — the grace window applies', async () => {
+    await bootstrap({ autoBlockEta: { stale1: Date.now() - 60_000 } });
+    const bg = await import('../background/index');
+    const manager = bg.autoBlockManager;
+    manager.graceMinutes = 30;
+
+    await dispatch({ action: 'recordSpam', items: [record('tweet-s1', 'stale1', true)] });
+    await vi.waitFor(
+      () => expect(storageData.autoBlockQueue).toContain('stale1'),
+      { timeout: 5000, interval: 25 },
+    );
+    // The stale (expired) eta must NOT let the new trigger fire immediately.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(storageData.blockedUsersOnX).toEqual([]);
+    expect((storageData.autoBlockEta as Record<string, number>).stale1).toBeGreaterThan(Date.now());
+  });
+
+  it('mixed etas: the ready entry is processed even behind a future one', async () => {
+    await bootstrap({
+      autoBlockQueue: ['future1', 'ready1'],
+      autoBlockEta: { future1: Date.now() + 3_600_000 },
+    });
+    const bg = await import('../background/index');
+
+    await vi.waitFor(
+      () => expect(storageData.blockedUsersOnX).toContain('ready1'),
+      { timeout: 5000, interval: 25 },
+    );
+    expect(storageData.autoBlockQueue).toEqual(['future1']);
+    expect(storageData.blockedUsersOnX).not.toContain('future1');
+  });
+
+  it('deleting one of two records of the same user keeps the pending entry', async () => {
+    await bootstrap();
+    const bg = await import('../background/index');
+    const manager = bg.autoBlockManager;
+    manager.graceMinutes = 30;
+
+    await dispatch({
+      action: 'recordSpam',
+      items: [record('tweet-d1', 'dupe1', true), record('tweet-d2', 'dupe1', true)],
+    });
+    await vi.waitFor(
+      () =>
+        (storageData.blockedHistory as Array<{ id: string }>).filter(
+          (it) => it.id === 'tweet-d1' || it.id === 'tweet-d2',
+        ).length === 2,
+      { timeout: 5000, interval: 25 },
+    );
+    expect(storageData.autoBlockQueue).toContain('dupe1');
+
+    await dispatch({ action: 'removeSpamRecord', id: 'tweet-d1' });
+    await new Promise((r) => setTimeout(r, 300));
+    // One record remains → the user stays pending (not yet fully intervened).
+    expect(storageData.autoBlockQueue).toContain('dupe1');
+
+    // Deleting the last record cancels the pending entry.
+    await dispatch({ action: 'removeSpamRecord', id: 'tweet-d2' });
+    await vi.waitFor(
+      () => expect(storageData.autoBlockQueue).not.toContain('dupe1'),
+      { timeout: 5000, interval: 25 },
+    );
+  });
+
+  it('restart persistence: a persisted queue with expired etas drains on worker wake', async () => {
+    await bootstrap({
+      autoBlockQueue: ['old1'],
+      autoBlockEta: { old1: Date.now() - 1 },
+    });
+    await vi.waitFor(
+      () => expect(storageData.blockedUsersOnX).toContain('old1'),
+      { timeout: 5000, interval: 25 },
+    );
+    expect(storageData.autoBlockQueue).toEqual([]);
+  });
+
   it('whitelist update instantly purges queued members from the pending queue', async () => {
     await bootstrap({ autoBlockQueue: ['wl1', 'keep1'] });
     const bg = await import('../background/index');

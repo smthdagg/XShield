@@ -826,3 +826,5 @@ async function handleBlockUser(screenName: string, isBlock: boolean): Promise<Bl
     return { success: false, reason: error instanceof Error ? error.message : String(error) };
   }
 }
+
+console.info(`[XShield] background v${chrome.runtime.getManifest().version} loaded`);

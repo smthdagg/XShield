@@ -645,6 +645,12 @@ async function init(): Promise<void> {
         if (isExtensionAlive()) filterTweets();
       }, delay);
     }
+
+    // Visible proof of which code the page is actually running — without
+    // this, a stale content script is indistinguishable from a broken fix.
+    console.info(
+      `[XShield] content v${chrome.runtime.getManifest().version} ready · 启用=${filterEnabled} · 规则=${blockRegexes.length}`,
+    );
   } catch (e) {
     console.error('[X-Blocker] init error:', e);
   }

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "XShield",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "X/Twitter comment spam blocker with cloud keyword sync, one-click block and auto-block.",
   "homepage_url": "https://github.com/smthdagg/XShield",
   "icons": {

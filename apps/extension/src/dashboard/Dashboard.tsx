@@ -299,9 +299,9 @@ export default function Dashboard() {
         }
       }
       setValue('queueInfo', info);
-      // Records stay on this page after enqueueing (1.5.1 model): a block
-      // success never deletes history — the row simply flips to "已拉黑"
-      // once the ledger in storage updates.
+      // Records stay in storage after enqueueing (1.5.1 model): once each
+      // block succeeds the ledger updates and the rows leave this working
+      // list (visible again under the 已拉黑 filter).
       setStatus(t.queuedNote.replace('{count}', String(names.length)));
       setSelectedIds([]);
     });
@@ -420,16 +420,22 @@ export default function Dashboard() {
   // trigger records exist but who are already in the blocked ledger.
   const BLOCKED_FILTER = '__blocked_on_x__';
   const triggerReasons = ['all', '内容屏蔽', '昵称屏蔽', '表情屏蔽', '特殊字符屏蔽', 'Grok屏蔽', BLOCKED_FILTER];
-  const filterLabel = (reason: string): string => (reason === BLOCKED_FILTER ? '已拉黑' : reason);
+  // Default ('all') means "not yet blocked": once a user enters the ledger,
+  // their records leave the working list — the 已拉黑 filter shows them
+  // again. Records themselves stay in storage (1.5.1: blocks never delete
+  // history); only the working view shrinks as blocks succeed.
+  const filterLabel = (reason: string): string =>
+    reason === BLOCKED_FILTER ? '已拉黑' : reason === 'all' ? '未拉黑' : reason;
 
   const filteredHistory = blockedHistory.filter((item) => {
     const handle = extractCleanScreenName(item.user ?? '');
+    const isBlocked = Boolean(handle) && blockedUsersOnX.includes(handle);
     if (triggerFilter === BLOCKED_FILTER) {
-      if (!handle || !blockedUsersOnX.includes(handle)) return false;
+      if (!isBlocked) return false;
+    } else if (isBlocked) {
+      return false;
     } else if (triggerFilter !== 'all') {
       if (item.reason !== triggerFilter) return false;
-      // Already-blocked users stay visible under their reason filter (the
-      // row shows the 已拉黑 state), matching the 1.5.1 list behaviour.
     }
     if (triggerQuery && !`${item.user} ${item.text} ${item.displayName}`.toLowerCase().includes(triggerQuery.toLowerCase())) {
       return false;
@@ -577,7 +583,12 @@ export default function Dashboard() {
                   </div>
                 );
               })}
-              {filteredHistory.length === 0 && <p className="empty-state">{t.historyEmpty}</p>}
+              {filteredHistory.length === 0 &&
+                (triggerFilter !== BLOCKED_FILTER && blockedHistory.length > 0 ? (
+                  <p className="empty-state">已拉黑的记录都在「已拉黑」筛选里；解除拉黑后会回到这里。</p>
+                ) : (
+                  <p className="empty-state">{t.historyEmpty}</p>
+                ))}
             </div>
           </DataPanel>
         )}

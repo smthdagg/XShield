@@ -6,7 +6,7 @@
 
 export const browserApi: typeof chrome = (globalThis as unknown as { browser?: typeof chrome }).browser ?? globalThis.chrome;
 
-export const DEFAULT_CLOUD_OWNER_REPO = 'amahteru/x-comment-blocker';
+export const DEFAULT_CLOUD_OWNER_REPO = 'smthdagg/XShield-keywords';
 
 function cloudApiUrl(ownerRepo: string): string {
   return `https://api.github.com/repos/${ownerRepo}/contents/keywords.txt`;

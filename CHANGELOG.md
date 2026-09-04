@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.5 - 2026-09-05
+
+### 词库源切换为自有仓库，剔除账号 handle
+
+- **云端词库源从上游 `amahteru/x-comment-blocker` 切换为自有仓库 `smthdagg/XShield-keywords`**：上游的 keywords.txt 混入了 244 个垃圾账号 handle（在 XShield 的账本模型里毫无意义，且污染规则库），已全部剔除。新词库 560 行 = 全部中文内容词 + 22 个品牌/广告词（VPN、交易所等）+ `t.cn`/`Gate Card` + 7 条正则规则。
+- 内置兜底词库（public/keywords.txt）同步清洗。
+- 下次同步（面板 → 规则与同步 → 立即同步）自动用干净词库整体替换本地 `cloudKeywords`。
+
 ## 0.5.4 - 2026-09-05
 
 ### 确认即离开工作列表（排队中/已拉黑双态）

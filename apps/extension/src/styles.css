@@ -66,6 +66,13 @@ button:disabled {
   object-fit: contain;
 }
 
+.brand .version-badge {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0.55;
+}
+
 .nav-list {
   display: grid;
   gap: 6px;

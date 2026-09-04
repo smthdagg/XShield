@@ -18,7 +18,7 @@ const storageData: Record<string, unknown> = {
 };
 
 const chromeMock = {
-  runtime: { id: 't', getURL: (p: string) => p, sendMessage: vi.fn(async () => ({ success: true })), onMessage: { addListener: vi.fn() } },
+  runtime: { id: 't', getManifest: () => ({ version: 'test' }), getURL: (p: string) => p, sendMessage: vi.fn(async () => ({ success: true })), onMessage: { addListener: vi.fn() } },
   storage: {
     local: { get: vi.fn(async (keys: Record<string, unknown>) => { const o: Record<string, unknown> = {}; for (const k of Object.keys(keys)) o[k] = storageData[k] ?? keys[k]; return o; }), set: vi.fn(async (i: Record<string, unknown>) => Object.assign(storageData, i)) },
     onChanged: { addListener: vi.fn(), removeListener: vi.fn() },

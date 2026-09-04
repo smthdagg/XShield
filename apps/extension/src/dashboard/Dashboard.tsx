@@ -299,9 +299,9 @@ export default function Dashboard() {
         }
       }
       setValue('queueInfo', info);
-      // Records stay in storage after enqueueing (1.5.1 model): once each
-      // block succeeds the ledger updates and the rows leave this working
-      // list (visible again under the 已拉黑 filter).
+      // Records stay in storage after enqueueing (1.5.1 model). The rows
+      // leave this working list as soon as the queue write lands (排队中
+      // filter); the ledger moves them to 已拉黑 as each block succeeds.
       setStatus(t.queuedNote.replace('{count}', String(names.length)));
       setSelectedIds([]);
     });
@@ -416,23 +416,28 @@ export default function Dashboard() {
   const [triggerQuery, setTriggerQuery] = useState('');
   const [triggerFilter, setTriggerFilter] = useState('all');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  // `__blocked_on_x__` is the 1.5.1 pseudo-reason: filter for users whose
-  // trigger records exist but who are already in the blocked ledger.
+  // `__blocked_on_x__` / `__queued_on_x__` are 1.5.1 pseudo-reasons driven by
+  // the ledger and the auto-block queue instead of the record's own reason.
   const BLOCKED_FILTER = '__blocked_on_x__';
-  const triggerReasons = ['all', '内容屏蔽', '昵称屏蔽', '表情屏蔽', '特殊字符屏蔽', 'Grok屏蔽', BLOCKED_FILTER];
-  // Default ('all') means "not yet blocked": once a user enters the ledger,
-  // their records leave the working list — the 已拉黑 filter shows them
-  // again. Records themselves stay in storage (1.5.1: blocks never delete
-  // history); only the working view shrinks as blocks succeed.
+  const QUEUED_FILTER = '__queued_on_x__';
+  const triggerReasons = ['all', '内容屏蔽', '昵称屏蔽', '表情屏蔽', '特殊字符屏蔽', 'Grok屏蔽', QUEUED_FILTER, BLOCKED_FILTER];
+  // Default ('all') is the working list: records whose user is neither
+  // queued nor blocked. Confirming a block (or an auto trigger enqueuing)
+  // moves rows out immediately — into 排队中 — and into 已拉黑 once the
+  // ledger confirms the block. Records stay in storage (1.5.1: blocks never
+  // delete history); only the working view shrinks.
   const filterLabel = (reason: string): string =>
-    reason === BLOCKED_FILTER ? '已拉黑' : reason === 'all' ? '未拉黑' : reason;
+    reason === BLOCKED_FILTER ? '已拉黑' : reason === QUEUED_FILTER ? '排队中' : reason === 'all' ? '未拉黑' : reason;
 
   const filteredHistory = blockedHistory.filter((item) => {
     const handle = extractCleanScreenName(item.user ?? '');
     const isBlocked = Boolean(handle) && blockedUsersOnX.includes(handle);
+    const isQueued = !isBlocked && Boolean(handle) && autoBlockQueue.includes(handle);
     if (triggerFilter === BLOCKED_FILTER) {
       if (!isBlocked) return false;
-    } else if (isBlocked) {
+    } else if (triggerFilter === QUEUED_FILTER) {
+      if (!isQueued) return false;
+    } else if (isBlocked || isQueued) {
       return false;
     } else if (triggerFilter !== 'all') {
       if (item.reason !== triggerFilter) return false;
@@ -443,6 +448,12 @@ export default function Dashboard() {
     return true;
   });
   const selectedRecords = filteredHistory.filter((item) => selectedIds.includes(`${item.id}:${item.time}`));
+  // Records currently living under the 排队中/已拉黑 filters instead of the
+  // working list.
+  const hasDeferredRecords = blockedHistory.some((item) => {
+    const handle = extractCleanScreenName(item.user ?? '');
+    return Boolean(handle) && (blockedUsersOnX.includes(handle) || autoBlockQueue.includes(handle));
+  });
   const selectedNames = Array.from(
     new Set(selectedRecords.map((item) => extractCleanScreenName(item.user ?? '')).filter(Boolean)),
   );
@@ -462,6 +473,7 @@ export default function Dashboard() {
           <img src={chrome.runtime.getURL('icons/xshield-logo.svg')} alt="" />
           <span>XShield</span>
           <span className={`status-dot${state.enabled ? ' on' : ''}`} />
+          <span className="version-badge">v{chrome.runtime.getManifest().version}</span>
         </div>
         <nav className="nav-list" aria-label="Sections">
           {navItems.map((item) => (
@@ -584,8 +596,8 @@ export default function Dashboard() {
                 );
               })}
               {filteredHistory.length === 0 &&
-                (triggerFilter !== BLOCKED_FILTER && blockedHistory.length > 0 ? (
-                  <p className="empty-state">已拉黑的记录都在「已拉黑」筛选里；解除拉黑后会回到这里。</p>
+                (triggerFilter !== BLOCKED_FILTER && triggerFilter !== QUEUED_FILTER && hasDeferredRecords ? (
+                  <p className="empty-state">记录都已进入拉黑流程：「排队中」「已拉黑」筛选里可见。</p>
                 ) : (
                   <p className="empty-state">{t.historyEmpty}</p>
                 ))}

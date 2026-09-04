@@ -5,8 +5,11 @@
  *   - the auto-block queue is pop-first and crash-safe;
  *   - trigger records are never deleted by a successful block — the ledger
  *     `blockedUsersOnX` marks users as blocked and the UI renders the state;
- *   - XShield deviations: an activity log (addLog), submitKeywords action,
- *     AsyncQueue single-writer for history batches, and queueInfo side table.
+ *   - XShield deviations: an activity log (addLog), AsyncQueue single-writer
+ *     for history batches, queueInfo side table, and a keyword-driven
+ *     pending-then-auto-block model: every keyword hit is queued with a
+ *     grace window; intervening (whitelist / delete) cancels it, otherwise
+ *     the watchdog drains it through the rate-limited block program.
  */
 import {
   browserApi as chrome,
@@ -15,7 +18,6 @@ import {
   getLocalDateString,
   getStorageDefaults,
   parseKeywords,
-  submitKeywordsToGithub,
   syncCloudKeywords,
   SYNC_INTERVAL_MINUTES,
   addLog,
@@ -252,6 +254,9 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 const MAX_BLOCK_RETRIES = 5;
 
+/** Buffer between a keyword trigger and its automatic block execution. */
+const AUTO_BLOCK_GRACE_MINUTES = 30;
+
 class AutoBlockManager {
   isProcessing = false;
   dailyLimit = 300;
@@ -259,7 +264,12 @@ class AutoBlockManager {
   minDelayMs = 5000;
   maxDelayMs = 10000;
 
+  /** Buffer between trigger and execution; tests may shorten it. */
+  graceMinutes = AUTO_BLOCK_GRACE_MINUTES;
+
   queue: string[] = [];
+  /** Per-user ready timestamp (ms). Missing entry = immediately eligible. */
+  eta: Record<string, number> = {};
   blockedUsersSet = new Set<string>();
   retryCounts = new Map<string, number>();
   countToday = 0;
@@ -287,6 +297,7 @@ class AutoBlockManager {
     const items = await chrome.storage.local.get(
       getStorageDefaults(
         'autoBlockQueue',
+        'autoBlockEta',
         'autoBlockToday',
         'autoBlockLastDate',
         'autoBlockPausedUntil',
@@ -296,6 +307,7 @@ class AutoBlockManager {
     );
 
     this.queue = (items.autoBlockQueue as string[]) ?? [];
+    this.eta = (items.autoBlockEta as Record<string, number>) ?? {};
     this.countToday = (items.autoBlockToday as number) ?? 0;
     this.lastDate = (items.autoBlockLastDate as string) ?? '';
     this.pausedUntil = (items.autoBlockPausedUntil as number) ?? 0;
@@ -309,18 +321,32 @@ class AutoBlockManager {
   /** Drop ledger members from the queue and persist when anything changed. */
   async purgeBlockedFromQueue(): Promise<void> {
     if (this.queue.length === 0) return;
-    const filtered = this.queue.filter((name) => !this.blockedUsersSet.has(name));
-    if (filtered.length !== this.queue.length) {
-      this.queue = filtered;
-      await this.saveState({ autoBlockQueue: this.queue });
+    const removed = this.queue.filter((name) => this.blockedUsersSet.has(name));
+    if (removed.length > 0) {
+      this.queue = this.queue.filter((name) => !this.blockedUsersSet.has(name));
+      for (const name of removed) delete this.eta[name];
+      await this.saveState({ autoBlockQueue: this.queue, autoBlockEta: this.eta });
     }
   }
 
-  /** Remove one user from the queue (used when they get blocked directly). */
+  /** Whitelist members never sit in the pending queue. */
+  async purgeWhitelistedFromQueue(whitelist: string[]): Promise<void> {
+    const set = new Set(whitelist);
+    const removed = this.queue.filter((name) => set.has(name));
+    if (removed.length > 0) {
+      this.queue = this.queue.filter((name) => !set.has(name));
+      for (const name of removed) delete this.eta[name];
+      await this.saveState({ autoBlockQueue: this.queue, autoBlockEta: this.eta });
+      void addLog('info', 'block', `白名单更新：${removed.length} 个用户移出待拉黑队列`);
+    }
+  }
+
+  /** Remove one user from the queue (blocked / whitelisted / record deleted). */
   async removeFromQueue(screenName: string): Promise<void> {
-    if (!this.queue.includes(screenName)) return;
+    if (!this.queue.includes(screenName) && !(screenName in this.eta)) return;
     this.queue = this.queue.filter((name) => name !== screenName);
-    await this.saveState({ autoBlockQueue: this.queue });
+    delete this.eta[screenName];
+    await this.saveState({ autoBlockQueue: this.queue, autoBlockEta: this.eta });
   }
 
   async init(): Promise<void> {
@@ -338,25 +364,40 @@ class AutoBlockManager {
     await chrome.storage.local.set(updates);
   }
 
-  async enqueueBatch(screenNames: string[]): Promise<number> {
+  async enqueueBatch(screenNames: string[], options?: { readyNow?: boolean }): Promise<number> {
     await this.init();
-    if (!screenNames || screenNames.length === 0) return 0;
+    if (!screenNames || screenNames.length === 0) {
+      void this.process();
+      return 0;
+    }
 
+    const { whitelist } = await chrome.storage.local.get(getStorageDefaults('whitelist'));
+    const whitelistSet = new Set((whitelist as string[]) ?? []);
     const validNames = Array.from(new Set(screenNames.map(extractCleanScreenName))).filter(
       (name) =>
         name &&
         /^[a-zA-Z0-9_]{1,15}$/v.test(name) &&
         !this.queue.includes(name) &&
-        !this.blockedUsersSet.has(name),
+        !this.blockedUsersSet.has(name) &&
+        !whitelistSet.has(name),
     );
 
     if (validNames.length > 0) {
       this.queue.push(...validNames);
-      await this.saveState({ autoBlockQueue: this.queue });
-      void addLog('info', 'block', `${validNames.length} 个用户加入待拉黑队列`);
-      void this.process();
+      const graceMs = Math.max(0, this.graceMinutes) * 60_000;
+      const readyAt = options?.readyNow || graceMs === 0 ? Date.now() : Date.now() + graceMs;
+      for (const name of validNames) {
+        if (this.eta[name] === undefined || readyAt < this.eta[name]) this.eta[name] = readyAt;
+      }
+      await this.saveState({ autoBlockQueue: this.queue, autoBlockEta: this.eta });
+      const graceNote =
+        options?.readyNow ? '立即执行' : `缓冲期 ${this.graceMinutes} 分钟，可在面板干预`;
+      void addLog('info', 'block', `${validNames.length} 个用户进入待拉黑（${graceNote}）`);
     }
 
+    // Always re-kick the drain: it also picks up entries whose grace window
+    // expired while nothing else woke the manager.
+    void this.process();
     return validNames.length;
   }
 
@@ -399,10 +440,17 @@ class AutoBlockManager {
 
           if (this.queue.length === 0) break;
 
+          // Grace-window aware pick: take the first entry whose buffer has
+          // expired. Entries still waiting for possible intervention stay in
+          // the queue; the watchdog alarm re-kicks the drain every minute.
+          const readyIndex = this.queue.findIndex((name) => (this.eta[name] ?? 0) <= now);
+          if (readyIndex === -1) break;
+
           // Pop-first (1.5.1): persist the shortened queue before the network
           // call, so a crashed MV3 worker never re-blocks the same user.
-          const currentItem = this.queue.shift() ?? '';
-          await this.saveState({ autoBlockQueue: this.queue });
+          const currentItem = this.queue.splice(readyIndex, 1)[0];
+          delete this.eta[currentItem];
+          await this.saveState({ autoBlockQueue: this.queue, autoBlockEta: this.eta });
 
           // The user may have been blocked manually (or by a previous run)
           // while sitting in the queue — the ledger wins, no second API call.
@@ -505,26 +553,22 @@ class AutoBlockManager {
 }
 
 const autoBlockManager = new AutoBlockManager();
+// Exported for tests (grace-window tuning); not part of the public surface.
+export { autoBlockManager };
 void autoBlockManager.init().then(() => {
   void autoBlockManager.process();
 });
 
 async function blockAllHistoryUsers(usersToBlock: string[]): Promise<{ success: boolean; total: number; queued: number }> {
   const names = Array.isArray(usersToBlock) ? usersToBlock : [];
-  const queued = await autoBlockManager.enqueueBatch(names);
+  // The user explicitly confirmed these — skip the grace window.
+  const queued = await autoBlockManager.enqueueBatch(names, { readyNow: true });
   return { success: true, total: names.length, queued };
 }
 
 chrome.runtime.onMessage.addListener((message: Record<string, unknown>, _sender, sendResponse) => {
   if (message.action === 'syncNow') {
     void doSync().then(sendResponse);
-    return true;
-  }
-  if (message.action === 'submitKeywords') {
-    void submitKeywordsToGithub().then(async (res) => {
-      void addLog(res.success ? 'info' : 'error', 'sync', `上传词库到 GitHub${res.success ? '成功' : `失败：${res.reason ?? ''}`}`);
-      sendResponse(res);
-    });
     return true;
   }
   if (message.action === 'blockUserOnX') {
@@ -580,6 +624,16 @@ chrome.runtime.onMessage.addListener((message: Record<string, unknown>, _sender,
   return false;
 });
 
+// Intervention fault-tolerance: whitelisting a user must instantly cancel
+// their pending auto-block — the queue, ledger and whitelist can overlap, and
+// the whitelist always wins over pending entries.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local') return;
+  if (changes.whitelist) {
+    void autoBlockManager.purgeWhitelistedFromQueue((changes.whitelist.newValue as string[]) ?? []);
+  }
+});
+
 async function notifyContentScripts(message: Record<string, unknown>): Promise<void> {
   const tabs = await chrome.tabs.query({
     url: ['*://*.twitter.com/*', '*://*.x.com/*'],
@@ -625,8 +679,13 @@ function handleRemoveSpamRecord(id: string, time?: number): Promise<{ success: b
     void notifyContentScripts({ action: 'removeLocalSentId', id });
   }
 
+  let batchRemovedUsers: string[] = [];
   if (pendingSpamBatch.length > 0) {
     const originalPendingLength = pendingSpamBatch.length;
+    batchRemovedUsers = pendingSpamBatch
+      .filter((item) => !isMatch(item))
+      .map((item) => extractCleanScreenName(item.user ?? ''))
+      .filter(Boolean);
     pendingSpamBatch = pendingSpamBatch.filter(isMatch);
     if (originalPendingLength > pendingSpamBatch.length && id) {
       globalSpamCache.delete(id);
@@ -637,6 +696,18 @@ function handleRemoveSpamRecord(id: string, time?: number): Promise<{ success: b
     await ensureHistoryInitialized();
 
     const originalLength = (inMemoryHistory ?? []).length;
+    // Capture which users lose their last record — deleting a record is an
+    // intervention and cancels the user's pending auto-block. Records still
+    // sitting in the write batch count too (they never reached memory).
+    const removedUsers = Array.from(
+      new Set([
+        ...batchRemovedUsers,
+        ...(inMemoryHistory ?? [])
+          .filter((item) => !isMatch(item))
+          .map((item) => extractCleanScreenName(item.user ?? ''))
+          .filter(Boolean),
+      ]),
+    );
     inMemoryHistory = (inMemoryHistory ?? []).filter(isMatch);
 
     const removedCount = originalLength - (inMemoryHistory ?? []).length;
@@ -646,6 +717,17 @@ function handleRemoveSpamRecord(id: string, time?: number): Promise<{ success: b
       }
       inMemoryBlockedCount = Math.max(0, (inMemoryBlockedCount ?? 0) - removedCount);
       await saveHistoryState();
+
+      const remainingUsers = new Set(
+        (inMemoryHistory ?? [])
+          .map((item) => extractCleanScreenName(item.user ?? ''))
+          .filter(Boolean),
+      );
+      for (const name of removedUsers) {
+        if (!remainingUsers.has(name)) {
+          void autoBlockManager.removeFromQueue(name);
+        }
+      }
     }
   }) as unknown as Promise<{ success: boolean }>;
 }
@@ -720,7 +802,11 @@ async function handleRecordSpam(items: SpamItem[]): Promise<void> {
   }
 
   if (newSpams.length === 0) return;
-  void addLog('info', 'trigger', `检测到 ${newSpams.length} 条垃圾回复（含 ${newSpams.filter((x) => x.isAutoBlock).length} 条自动拉黑）`);
+  void addLog(
+    'info',
+    'trigger',
+    `检测到 ${newSpams.length} 条垃圾回复（${newSpams.filter((x) => x.isAutoBlock).length} 条进入待拉黑）`,
+  );
 
   const autoBlockSpams = newSpams.filter((s) => s.isAutoBlock && s.user);
 

@@ -11,7 +11,6 @@ import {
 } from '../store/blockerStorage';
 
 let blockRegexes: RegExp[] = [];
-let autoBlockRegexes: RegExp[] = [];
 let lastKeywordsKey = '';
 let checkUsername = true;
 let onlyComments = true;
@@ -38,11 +37,6 @@ function isExtensionAlive(): boolean {
 function matchesBlocklist(text: string): boolean {
   if (blockRegexes.length === 0) return false;
   return blockRegexes.some((regex) => regex.test(text));
-}
-
-function matchesAutoBlocklist(text: string): boolean {
-  if (autoBlockRegexes.length === 0) return false;
-  return autoBlockRegexes.some((regex) => regex.test(text));
 }
 
 function buildTrieRegex(plainKeywords: string[]): RegExp | null {
@@ -121,7 +115,6 @@ async function mergeKeywords(): Promise<void> {
         'keywords',
         'cloudEnabled',
         'cloudKeywords',
-        'autoBlockKeywords',
         'disabledCloudKeywords',
       ),
     );
@@ -133,17 +126,13 @@ async function mergeKeywords(): Promise<void> {
       ? parseKeywords((items.cloudKeywords as string) ?? '').filter((k) => !disabledSet.has(k))
       : [];
 
-    const blockKeywordsSet = new Set([...cloudKws, ...userKws]);
-    const blockKeywords = Array.from(blockKeywordsSet);
-    const rawAutoBlockKws = (items.autoBlockKeywords as string[]) ?? [];
-    const autoBlockKws = rawAutoBlockKws.filter((k) => blockKeywordsSet.has(k));
+    const blockKeywords = Array.from(new Set([...cloudKws, ...userKws]));
 
-    const newKey = `${blockKeywords.join('\n')}|AUTO:|${autoBlockKws.join('\n')}`;
+    const newKey = blockKeywords.join('\n');
     if (newKey === lastKeywordsKey) return;
     lastKeywordsKey = newKey;
 
     blockRegexes = buildRegexes(blockKeywords);
-    autoBlockRegexes = buildRegexes(autoBlockKws);
   } catch (e) {
     console.error('[X-Blocker] mergeKeywords error:', e);
   }
@@ -324,38 +313,13 @@ function detectSpam(
     ? userName.replaceAll(/[\s_.\-]+/gv, '').replaceAll(invisibleCharsRegex, '')
     : '';
 
-  if (matchesAutoBlocklist(tweetBody)) {
-    return {
-      isSpam: true,
-      isAutoBlock: true,
-      blockReason: '内容屏蔽',
-      userName,
-      stableHandle,
-      displayName,
-    };
-  }
-
-  if (
-    checkUsername &&
-    userName &&
-    (matchesAutoBlocklist(cleanUserName) ||
-      matchesAutoBlocklist(userName) ||
-      matchesAutoBlocklist(stableHandle))
-  ) {
-    return {
-      isSpam: true,
-      isAutoBlock: true,
-      blockReason: '昵称屏蔽',
-      userName,
-      stableHandle,
-      displayName,
-    };
-  }
-
+  // Unified keyword model (0.6.0): every keyword hit enters the pending
+  // queue; the user can still intervene during the grace window, otherwise
+  // the auto-block program takes over.
   if (matchesBlocklist(tweetBody)) {
     return {
       isSpam: true,
-      isAutoBlock: false,
+      isAutoBlock: true,
       blockReason: '内容屏蔽',
       userName,
       stableHandle,
@@ -372,7 +336,7 @@ function detectSpam(
   ) {
     return {
       isSpam: true,
-      isAutoBlock: false,
+      isAutoBlock: true,
       blockReason: '昵称屏蔽',
       userName,
       stableHandle,
@@ -714,7 +678,6 @@ chrome.storage.onChanged.addListener((changes, area) => {
     changes.keywords ||
     changes.cloudEnabled ||
     changes.cloudKeywords ||
-    changes.autoBlockKeywords ||
     changes.disabledCloudKeywords
   ) {
     void mergeKeywords().then(() => {

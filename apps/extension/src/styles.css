@@ -1084,3 +1084,19 @@ input[type="checkbox"] {
 .log-cat.system { background: #f2f0fa; color: #574d82; }
 
 .profile-card-open { color: #5b8a6c; display: inline-flex; align-items: center; margin-left: auto; }
+
+.keyword-edit-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.keyword-tag.is-editing input {
+  width: 150px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  outline: none;
+  padding: 0;
+}

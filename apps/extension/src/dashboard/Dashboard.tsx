@@ -4,7 +4,8 @@
  *      block one, select-all block)
  *   2. Blocked log (blocked users + pending queue + today counter)
  *   3. Whitelist
- *   4. Rules & sync (cloud + custom keywords, auto-block picks, GitHub)
+ *   4. Rules & sync (cloud + custom keywords; cloud syncs down, local is
+ *      user-owned: add / edit / delete)
  *   5. Script settings (master, hide/highlight mode, filters, language)
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
@@ -14,6 +15,7 @@ import {
   Download,
   ExternalLink,
   ListChecks,
+  Pencil,
   ScrollText,
   Settings as SettingsIcon,
   ShieldCheck,
@@ -50,7 +52,6 @@ const DEFAULTS: Record<string, unknown> = {
   blockedHistory: [] as SpamRecord[],
   cloudKeywords: '',
   keywords: '',
-  autoBlockKeywords: [] as string[],
   disabledCloudKeywords: [] as string[],
   whitelist: [] as string[],
   checkUsername: true,
@@ -60,9 +61,6 @@ const DEFAULTS: Record<string, unknown> = {
   blockGrok: false,
   cloudEnabled: true,
   cloudOwnerRepo: '',
-  githubToken: '',
-  githubOwnerRepo: '',
-  githubBranch: 'main',
   autoBlockQueue: [] as string[],
   queueInfo: {} as Record<string, { displayName?: string; text?: string }>,
   autoBlockToday: 0,
@@ -230,13 +228,6 @@ export default function Dashboard() {
       .finally(() => setSyncing(false));
   };
 
-  const submitKeywords = (): void => {
-    void send({ action: 'submitKeywords' }).then((res) => {
-      const result = res as { success?: boolean; reason?: string };
-      setStatus(result?.success ? t.submitDone : result?.reason || t.submitFail);
-    });
-  };
-
   const blockOne = (handle: string): void => {
     const clean = extractCleanScreenName(handle);
     if (!clean) return;
@@ -337,16 +328,18 @@ export default function Dashboard() {
     if (el) el.value = '';
   };
 
-  const deleteKeyword = (keyword: string): void => {
-    setValue('keywords', customKeywords.filter((k) => k !== keyword).join('\n'));
-    setValue('autoBlockKeywords', ((state.autoBlockKeywords as string[]) ?? []).filter((k) => k !== keyword));
+  const saveEditedKeyword = (): void => {
+    if (!editingKeyword) return;
+    const value = editingKeyword.value.trim();
+    const next = customKeywords
+      .map((k) => (k === editingKeyword.old ? value : k))
+      .filter((k) => k.length > 0);
+    setValue('keywords', Array.from(new Set(next)).join('\n'));
+    setEditingKeyword(null);
   };
 
-  const toggleAutoBlockKeyword = (keyword: string, enable: boolean): void => {
-    const next = new Set((state.autoBlockKeywords as string[]) ?? []);
-    if (enable) next.add(keyword);
-    else next.delete(keyword);
-    setValue('autoBlockKeywords', Array.from(next));
+  const deleteKeyword = (keyword: string): void => {
+    setValue('keywords', customKeywords.filter((k) => k !== keyword).join('\n'));
   };
 
   const toggleDisabledCloud = (keyword: string, disable: boolean): void => {
@@ -409,7 +402,7 @@ export default function Dashboard() {
 
   // rules page state
   const [cloudQuery, setCloudQuery] = useState('');
-  const [editingAutoBlock, setEditingAutoBlock] = useState(false);
+  const [editingKeyword, setEditingKeyword] = useState<{ old: string; value: string } | null>(null);
   const visibleCloudKeywords = cloudKeywords.filter((k) => (cloudQuery ? k.includes(cloudQuery.toLowerCase()) : true));
 
   // triggered page state
@@ -729,23 +722,15 @@ export default function Dashboard() {
                   value={cloudQuery}
                   onChange={(e) => setCloudQuery(e.currentTarget.value)}
                 />
-                <button className="plain-button" type="button" onClick={() => setEditingAutoBlock(!editingAutoBlock)}>
-                  {editingAutoBlock ? t.save : t.autoBlockKeywordsLabel}
-                </button>
               </div>
               <div className="tag-cloud">
                 {visibleCloudKeywords.map((keyword) => {
                   const disabled = ((state.disabledCloudKeywords as string[]) ?? []).includes(keyword);
-                  const isAuto = ((state.autoBlockKeywords as string[]) ?? []).includes(keyword);
                   return (
                     <KeywordTag
                       key={keyword}
                       keyword={keyword}
-                      isAutoBlock={isAuto}
                       disabled={disabled}
-                      showCheckbox={editingAutoBlock}
-                      checked={isAuto}
-                      onToggleCheck={() => toggleAutoBlockKeyword(keyword, !isAuto)}
                       onDelete={() => toggleDisabledCloud(keyword, !disabled)}
                     />
                   );
@@ -766,26 +751,42 @@ export default function Dashboard() {
                 <button className="plain-button" type="button" onClick={exportKeywords}>
                   <Download size={16} /> {t.export}
                 </button>
-                <button className="plain-button" type="button" onClick={submitKeywords}>
-                  <Upload size={16} /> {t.submitToGithub}
-                </button>
               </div>
-              <p className="hint">{t.submitHint}</p>
+              <p className="hint">{t.customHint}</p>
               <div className="tag-cloud">
-                {customKeywords.map((keyword) => {
-                  const isAuto = ((state.autoBlockKeywords as string[]) ?? []).includes(keyword);
-                  return (
-                    <KeywordTag
-                      key={keyword}
-                      keyword={keyword}
-                      isAutoBlock={isAuto}
-                      showCheckbox
-                      checked={isAuto}
-                      onToggleCheck={() => toggleAutoBlockKeyword(keyword, !isAuto)}
-                      onDelete={() => deleteKeyword(keyword)}
-                    />
-                  );
-                })}
+                {customKeywords.map((keyword) =>
+                  editingKeyword?.old === keyword ? (
+                    <span key={keyword} className="keyword-tag is-editing">
+                      <input
+                        value={editingKeyword.value}
+                        autoFocus
+                        onChange={(e) => setEditingKeyword({ old: keyword, value: e.currentTarget.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') saveEditedKeyword();
+                          if (e.key === 'Escape') setEditingKeyword(null);
+                        }}
+                      />
+                      <button type="button" className="tag-action" title={t.save} onClick={saveEditedKeyword}>
+                        ✓
+                      </button>
+                      <button type="button" className="tag-action" title={t.cancel} onClick={() => setEditingKeyword(null)}>
+                        ✕
+                      </button>
+                    </span>
+                  ) : (
+                    <span key={keyword} className="keyword-edit-wrap">
+                      <KeywordTag keyword={keyword} onDelete={() => deleteKeyword(keyword)} />
+                      <button
+                        type="button"
+                        className="tag-action"
+                        title={t.edit}
+                        onClick={() => setEditingKeyword({ old: keyword, value: keyword })}
+                      >
+                        <Pencil size={12} />
+                      </button>
+                    </span>
+                  ),
+                )}
                 {customKeywords.length === 0 && <p className="empty-state">{t.noCustomKeywords}</p>}
               </div>
             </DataPanel>
@@ -917,18 +918,6 @@ export default function Dashboard() {
                   placeholder="amahteru/x-comment-blocker"
                   onChange={(e) => setValue('cloudOwnerRepo', e.currentTarget.value)}
                 />
-              </label>
-              <label>
-                <span>{t.githubToken}</span>
-                <input type="password" value={String(state.githubToken ?? '')} onChange={(e) => setValue('githubToken', e.currentTarget.value)} />
-              </label>
-              <label>
-                <span>{t.githubOwnerRepo}</span>
-                <input value={String(state.githubOwnerRepo ?? '')} onChange={(e) => setValue('githubOwnerRepo', e.currentTarget.value)} />
-              </label>
-              <label>
-                <span>{t.githubBranch}</span>
-                <input value={String(state.githubBranch ?? 'main')} onChange={(e) => setValue('githubBranch', e.currentTarget.value)} />
               </label>
             </div>
             <p className="hint">{t.cloudSourceHint}</p>

@@ -60,9 +60,9 @@ const STORAGE_DEFAULTS: Record<string, unknown> = {
   cloudETag: '',
   blockedUsersOnX: [],
   historyFilterReason: 'all',
-  autoBlockKeywords: [],
   disabledCloudKeywords: [],
   autoBlockQueue: [],
+  autoBlockEta: {},
   autoBlockToday: 0,
   autoBlockLastDate: '',
   autoBlockPausedUntil: 0,
@@ -160,7 +160,7 @@ export async function syncCloudKeywords(ownerRepo: string = DEFAULT_CLOUD_OWNER_
     const cloudList = parseKeywords(text);
 
     const storageItems = await browserApi.storage.local.get(
-      getStorageDefaults('disabledCloudKeywords', 'autoBlockKeywords', 'keywords', 'cloudKeywords'),
+      getStorageDefaults('disabledCloudKeywords', 'cloudKeywords'),
     );
 
     const currentCloudList = parseKeywords((storageItems.cloudKeywords as string) ?? '');
@@ -170,18 +170,13 @@ export async function syncCloudKeywords(ownerRepo: string = DEFAULT_CLOUD_OWNER_
     // carries a ?t= cache-buster so stale CDN responses are unlikely.
 
     const disabledCloudKeywords = (storageItems.disabledCloudKeywords as string[]) ?? [];
-    const autoBlockKeywords = (storageItems.autoBlockKeywords as string[]) ?? [];
-    const userKws = parseKeywords((storageItems.keywords as string) ?? '');
 
     const cloudListSet = new Set(cloudList);
     const cleanedDisabled = disabledCloudKeywords.filter((k) => cloudListSet.has(k));
-    const userKwsSet = new Set(userKws);
-    const cleanedAutoBlock = autoBlockKeywords.filter((k) => cloudListSet.has(k) || userKwsSet.has(k));
 
     await browserApi.storage.local.set({
       cloudKeywords: cloudList.join('\n'),
       disabledCloudKeywords: cleanedDisabled,
-      autoBlockKeywords: cleanedAutoBlock,
       cloudETag: newETag,
       lastSyncTime: Date.now(),
       syncStatus: 'ok',
@@ -202,85 +197,7 @@ export async function syncCloudKeywords(ownerRepo: string = DEFAULT_CLOUD_OWNER_
 
 // ---- XShield additions (kept from our build; not part of 1.4.3) ----
 
-function utf8ToBase64(text: string): string {
-  const bytes = new TextEncoder().encode(text);
-  let binary = '';
-  bytes.forEach((byte) => (binary += String.fromCharCode(byte)));
-  return btoa(binary);
-}
 
-function base64ToUtf8(base64: string): string {
-  const binary = atob(base64);
-  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-  return new TextDecoder().decode(bytes);
-}
-
-/** Contributor write: upload cloud + custom keywords to the user's own repo. */
-export async function submitKeywordsToGithub(): Promise<{ success: boolean; reason?: string }> {
-  const stored = await chrome.storage.local.get({
-    githubToken: '',
-    githubOwnerRepo: '',
-    githubBranch: 'main',
-    keywords: '',
-    cloudKeywords: '',
-  });
-  const token = stored.githubToken as string;
-  const ownerRepo = stored.githubOwnerRepo as string;
-  const branch = (stored.githubBranch as string) || 'main';
-  if (!token || !ownerRepo) {
-    return { success: false, reason: '请先在设置中填写 GitHub Token 与仓库' };
-  }
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(ownerRepo)) {
-    return { success: false, reason: '仓库格式应为 owner/repo' };
-  }
-
-  const userKws = parseKeywords((stored.keywords as string) ?? '');
-  const cloudKws = parseKeywords((stored.cloudKeywords as string) ?? '');
-  const localKws = Array.from(new Set([...cloudKws, ...userKws]));
-  if (localKws.length === 0) {
-    return { success: false, reason: '本地没有词库（先同步或添加自定义词）' };
-  }
-
-  const apiBase = `https://api.github.com/repos/${ownerRepo}/contents/keywords.txt`;
-  const authHeaders = { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' };
-
-  try {
-    const getRes = await fetch(`${apiBase}?ref=${encodeURIComponent(branch)}`, {
-      headers: authHeaders,
-      signal: AbortSignal.timeout(15000),
-    });
-    let sha: string | null = null;
-    let existingKws: string[] = [];
-    if (getRes.ok) {
-      const meta = (await getRes.json()) as { sha?: string; content?: string };
-      sha = meta.sha ?? null;
-      if (meta.content) existingKws = parseKeywords(base64ToUtf8(meta.content));
-    } else if (getRes.status !== 404) {
-      return { success: false, reason: `获取仓库文件失败: HTTP ${getRes.status}` };
-    }
-
-    const merged = Array.from(new Set([...existingKws, ...localKws]));
-    const content = `${merged.join('\n')}\n`;
-    const putRes = await fetch(apiBase, {
-      method: 'PUT',
-      headers: { ...authHeaders, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        message: `chore: sync ${localKws.length} keywords from XShield`,
-        content: utf8ToBase64(content),
-        branch,
-        ...(sha ? { sha } : {}),
-      }),
-      signal: AbortSignal.timeout(15000),
-    });
-    if (!putRes.ok) {
-      const detail = await putRes.text().catch(() => '');
-      return { success: false, reason: `提交失败: HTTP ${putRes.status} ${detail.slice(0, 120)}` };
-    }
-    return { success: true };
-  } catch (error) {
-    return { success: false, reason: error instanceof Error ? error.message : String(error) };
-  }
-}
 
 export type LogLevel = 'info' | 'warn' | 'error';
 

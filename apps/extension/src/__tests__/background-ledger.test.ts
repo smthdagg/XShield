@@ -112,7 +112,10 @@ async function bootstrap(seed?: Record<string, unknown>, fetchImpl?: FetchImpl):
   vi.stubGlobal('chrome', chromeMock);
   vi.stubGlobal('fetch', fetchImpl ?? okFetch());
   Object.assign(storageData, { blockedUsersOnX: [], autoBlockQueue: [], blockedHistory: [] }, seed);
-  await import('../background/index');
+  const bg = await import('../background/index');
+  // Most tests exercise the drain immediately; opt into the grace window
+  // explicitly in the dedicated test.
+  bg.autoBlockManager.graceMinutes = 0;
 }
 
 function record(id: string, user: string, isAutoBlock: boolean): Record<string, unknown> {
@@ -231,6 +234,76 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
       String(call[0]).includes('blocks/create.json'),
     );
     expect(createCalls).toHaveLength(0);
+  });
+
+  it('grace window: keyword hits wait before auto-blocking; deletion and whitelist cancel them', async () => {
+    const fetchImpl = okFetch();
+    await bootstrap();
+    const bg = await import('../background/index');
+    const manager = bg.autoBlockManager;
+
+    // Keyword hit lands in the queue with the default 30-minute grace window.
+    manager.graceMinutes = 30;
+    await dispatch({ action: 'recordSpam', items: [record('tweet-g1', 'pending1', true)] });
+
+    await vi.waitFor(
+      () => expect(storageData.autoBlockQueue).toContain('pending1'),
+      { timeout: 5000, interval: 25 },
+    );
+    // Still inside the window: nothing blocked yet, no API call.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(storageData.blockedUsersOnX).toEqual([]);
+    expect((storageData.autoBlockEta as Record<string, number>).pending1).toBeGreaterThan(Date.now());
+    const mock = fetchImpl as unknown as { mock: { calls: unknown[][] } };
+    expect(
+      mock.mock.calls.filter((call) => String(call[0]).includes('blocks/create.json')),
+    ).toHaveLength(0);
+
+    // Grace expires (simulated) → the drain executes the block.
+    (storageData.autoBlockEta as Record<string, number>).pending1 = Date.now() - 1;
+    await manager.process();
+
+    await vi.waitFor(
+      () => expect(storageData.blockedUsersOnX).toContain('pending1'),
+      { timeout: 5000, interval: 25 },
+    );
+    expect(storageData.autoBlockQueue).toEqual([]);
+
+    // Deleting the last record of a queued user cancels their pending block.
+    await dispatch({ action: 'recordSpam', items: [record('tweet-g2', 'pending2', true)] });
+    await vi.waitFor(
+      () => expect(storageData.blockedHistory).toContainEqual(expect.objectContaining({ id: 'tweet-g2' })),
+      { timeout: 5000, interval: 25 },
+    );
+    await dispatch({ action: 'removeSpamRecord', id: 'tweet-g2' });
+    await vi.waitFor(
+      () => expect(storageData.autoBlockQueue).not.toContain('pending2'),
+      { timeout: 5000, interval: 25 },
+    );
+    expect(storageData.blockedUsersOnX).not.toContain('pending2');
+
+    // Whitelisting a queued user also cancels their pending entry.
+    await dispatch({ action: 'recordSpam', items: [record('tweet-g3', 'pending3', true)] });
+    await vi.waitFor(
+      () => expect(storageData.autoBlockQueue).toContain('pending3'),
+      { timeout: 5000, interval: 25 },
+    );
+    await manager.purgeWhitelistedFromQueue(['pending3']);
+    await vi.waitFor(
+      () => expect(storageData.autoBlockQueue).not.toContain('pending3'),
+      { timeout: 5000, interval: 25 },
+    );
+    expect(storageData.blockedUsersOnX).not.toContain('pending3');
+  }, 20000);
+
+  it('whitelist update instantly purges queued members from the pending queue', async () => {
+    await bootstrap({ autoBlockQueue: ['wl1', 'keep1'] });
+    const bg = await import('../background/index');
+    await bg.autoBlockManager.purgeWhitelistedFromQueue(['wl1']);
+    await vi.waitFor(
+      () => expect(storageData.autoBlockQueue).toEqual(['keep1']),
+      { timeout: 5000, interval: 25 },
+    );
   });
 
   it('permanent failure (code 63, account suspended): ledger untouched, item dropped', async () => {

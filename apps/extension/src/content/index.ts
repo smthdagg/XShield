@@ -602,13 +602,14 @@ async function init(): Promise<void> {
         for (const node of mutation.addedNodes) {
           if (node.nodeType !== Node.ELEMENT_NODE) continue;
           const el = node as Element;
-          if (el.getAttribute('data-testid') === 'cellInnerDiv') {
-            pendingTweets.add(el);
-          } else if (el.firstElementChild) {
-            for (const inner of Array.from(el.querySelectorAll('[data-testid="cellInnerDiv"]'))) {
-              pendingTweets.add(inner);
-            }
-          }
+          // Three arrival shapes: the cell itself, a subtree containing the
+          // cell, and — the first-open hydration case — content inserted
+          // INSIDE an existing skeleton cell, where the cell is an ancestor
+          // of the added node rather than the node itself.
+          const cell =
+            el.closest('[data-testid="cellInnerDiv"]') ??
+            (el.firstElementChild ? el.querySelector('[data-testid="cellInnerDiv"]') : null);
+          if (cell) pendingTweets.add(cell);
         }
 
         const tweet = getEnclosingTweetIfRelevant(mutation.target);
@@ -637,8 +638,9 @@ async function init(): Promise<void> {
 
     // X renders cell skeletons first and fills text afterwards (characterData
     // mutations). Schedule a few delayed full re-scans so tweets that hydrated
-    // after the initial pass still get evaluated without needing a refresh.
-    for (const delay of [600, 1600, 3200]) {
+    // after the initial pass still get evaluated without needing a refresh —
+    // the tail extends far enough to cover a cold-cache first open.
+    for (const delay of [600, 1600, 3200, 6000, 10000]) {
       setTimeout(() => {
         if (isExtensionAlive()) filterTweets();
       }, delay);

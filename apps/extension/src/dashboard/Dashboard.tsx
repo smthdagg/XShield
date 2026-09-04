@@ -212,6 +212,11 @@ export default function Dashboard() {
   const blockedHistory = useMemo(() => (state.blockedHistory as SpamRecord[]) ?? [], [state.blockedHistory]);
   const autoBlockQueue = useMemo(() => (state.autoBlockQueue as string[]) ?? [], [state.autoBlockQueue]);
   const blockedUsersOnX = useMemo(() => (state.blockedUsersOnX as string[]) ?? [], [state.blockedUsersOnX]);
+  // Display-side ledger filter: a blocked user must never render as "pending".
+  const pendingQueue = useMemo(
+    () => autoBlockQueue.filter((name) => !blockedUsersOnX.includes(name)),
+    [autoBlockQueue, blockedUsersOnX],
+  );
   const whitelist = useMemo(() => (state.whitelist as string[]) ?? [], [state.whitelist]);
   const cloudKeywords = useMemo(() => parseKeywords(String(state.cloudKeywords ?? '')), [state.cloudKeywords]);
   const customKeywords = useMemo(() => parseKeywords(String(state.keywords ?? '')), [state.keywords]);
@@ -581,7 +586,7 @@ export default function Dashboard() {
           <div className="stack">
             <DataPanel
               title={t.blockedLog}
-              meta={`${t.autoBlockToday}: ${String(state.autoBlockToday ?? 0)} · ${t.queueRemaining}: ${autoBlockQueue.length}${
+              meta={`${t.autoBlockToday}: ${String(state.autoBlockToday ?? 0)} · ${t.queueRemaining}: ${pendingQueue.length}${
                 Number(state.autoBlockPausedUntil ?? 0) > Date.now() ? ` · ${t.paused}` : ''
               }`}
             >
@@ -592,7 +597,7 @@ export default function Dashboard() {
                 </article>
                 <article className="metric-card">
                   <span>{t.queueRemaining}</span>
-                  <strong>{autoBlockQueue.length}</strong>
+                  <strong>{pendingQueue.length}</strong>
                 </article>
                 <article className="metric-card">
                   <span>{t.blockedUsers}</span>
@@ -637,9 +642,9 @@ export default function Dashboard() {
               </div>
             </DataPanel>
 
-            <DataPanel title={t.queueTitle} meta={`${autoBlockQueue.length}`}>
+            <DataPanel title={t.queueTitle} meta={`${pendingQueue.length}`}>
               <div className="card-grid">
-                {autoBlockQueue.map((name) => {
+                {pendingQueue.map((name) => {
                   const info = ((state.queueInfo as Record<string, { displayName?: string; text?: string }>) ?? {})[name];
                   return (
                     <div className="profile-card" key={name} role="button" tabIndex={0} onClick={() => window.open(`https://x.com/${name}`, '_blank')}>
@@ -652,7 +657,7 @@ export default function Dashboard() {
                     </div>
                   );
                 })}
-                {autoBlockQueue.length === 0 && <p className="empty-state">{t.queueEmpty}</p>}
+                {pendingQueue.length === 0 && <p className="empty-state">{t.queueEmpty}</p>}
               </div>
             </DataPanel>
           </div>

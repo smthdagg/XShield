@@ -184,6 +184,55 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
     expect(storageData.blockedCount).toBe(2);
   });
 
+  it('manual block of a QUEUED user purges them from the pending queue', async () => {
+    // stuck1's block call hangs forever, so process() stays in-flight on the
+    // first item and never touches the second one; the manual block of
+    // spammer1 must still go through and purge it from the queue.
+    const hangFetch: FetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes('blocks/create.json') && String(init?.body ?? '').includes('stuck1')) {
+        return new Promise<Response>(() => {});
+      }
+      return new Response(JSON.stringify({ screen_name: 'spammer1' }), { status: 200 });
+    }) as unknown as FetchImpl;
+    await bootstrap({ autoBlockQueue: ['stuck1', 'spammer1'] }, hangFetch);
+
+    // Let process() shift stuck1 and hang on its block call.
+    await new Promise((r) => setTimeout(r, 50));
+
+    const res = (await dispatch({ action: 'blockUserOnX', screenName: 'spammer1' })) as {
+      success?: boolean;
+    };
+    expect(res?.success).toBe(true);
+
+    // Ledger write implies queue exit: stuck1 is in-flight (shifted), and
+    // spammer1 must be gone from the persisted pending queue.
+    await vi.waitFor(
+      () => expect(storageData.autoBlockQueue).toEqual([]),
+      { timeout: 5000, interval: 25 },
+    );
+    expect(storageData.blockedUsersOnX).toContain('spammer1');
+  });
+
+  it('startup purge: ledger members left in a stale queue are dropped before any API call', async () => {
+    const fetchImpl = okFetch();
+    await bootstrap(
+      { autoBlockQueue: ['stale1', 'stale2'], blockedUsersOnX: ['stale1', 'stale2'] },
+      fetchImpl,
+    );
+
+    await vi.waitFor(
+      () => expect(storageData.autoBlockQueue).toEqual([]),
+      { timeout: 5000, interval: 25 },
+    );
+
+    // They were already blocked — no blocks/create.json may ever fire for them.
+    const mock = fetchImpl as unknown as { mock: { calls: unknown[][] } };
+    const createCalls = mock.mock.calls.filter((call) =>
+      String(call[0]).includes('blocks/create.json'),
+    );
+    expect(createCalls).toHaveLength(0);
+  });
+
   it('permanent failure (code 63, account suspended): ledger untouched, item dropped', async () => {
     const suspendedFetch: FetchImpl = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);

@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.5.1 - 2026-09-04
+
+### 修复两个实测 bug
+
+- **已拉黑用户残留在「待拉黑」队列**：账本与队列全链路同步——拉黑落账（`markBlockedOnX`）时立即把该用户从队列移除并持久化；处理循环每轮从存储刷新后先按账本清洗队列；出队后再次核对账本，命中即跳过（不再对已拉黑用户发第二次 create.json）；面板「待拉黑」卡片与计数也按账本过滤显示。历史残留的脏队列在后台启动时自动清洗。
+- **首次打开不触发过滤、刷新才触发**：X 首开注水时把整段推文子树插进已存在的空骨架 cell 内部——此前 MutationObserver 只认「新节点是 cell」或「新节点包含 cell」两种形态，漏掉这种「cell 是祖先」的情况，只能靠 3.2s 前的延迟重扫兜底，冷缓存水合慢于 3.2s 就永远错过。现在观察器补上 `closest` 路径（新增节点位于 cell 内部 → 处理该 cell），注水后立刻触发；延迟重扫兜底延长到 10s。
+- **恢复完整构建链**：删除零引用的遗留死模块（`src/db/` 全部、`src/store/` 中 `useAppStore`/`queueRunner`/`realBlockAdapter`/`xApiBlockAdapter`，其依赖 dexie/zustand 上一版已移除），`npm run build`（tsc + vite build）恢复可用。
+- **回归测试**：新增 3 条——手动拉黑清除队列中同用户、启动清洗脏队列且不发任何 API、文章子树注入已有骨架 cell 时观察器立即隐藏（不依赖延迟重扫）。
 
 ### 架构对齐 X(Twitter) Comment Blocker 1.5.1：修复数据漂移与不稳定
 

@@ -301,6 +301,26 @@ class AutoBlockManager {
     this.pausedUntil = (items.autoBlockPausedUntil as number) ?? 0;
     this.batchCount = (items.autoBlockBatchCount as number) ?? 0;
     this.blockedUsersSet = new Set((items.blockedUsersOnX as string[]) ?? []);
+    // The ledger is the source of truth (1.5.1): a user marked blocked must
+    // never linger in the pending queue, even if older data left them there.
+    await this.purgeBlockedFromQueue();
+  }
+
+  /** Drop ledger members from the queue and persist when anything changed. */
+  async purgeBlockedFromQueue(): Promise<void> {
+    if (this.queue.length === 0) return;
+    const filtered = this.queue.filter((name) => !this.blockedUsersSet.has(name));
+    if (filtered.length !== this.queue.length) {
+      this.queue = filtered;
+      await this.saveState({ autoBlockQueue: this.queue });
+    }
+  }
+
+  /** Remove one user from the queue (used when they get blocked directly). */
+  async removeFromQueue(screenName: string): Promise<void> {
+    if (!this.queue.includes(screenName)) return;
+    this.queue = this.queue.filter((name) => name !== screenName);
+    await this.saveState({ autoBlockQueue: this.queue });
   }
 
   async init(): Promise<void> {
@@ -383,6 +403,13 @@ class AutoBlockManager {
           // call, so a crashed MV3 worker never re-blocks the same user.
           const currentItem = this.queue.shift() ?? '';
           await this.saveState({ autoBlockQueue: this.queue });
+
+          // The user may have been blocked manually (or by a previous run)
+          // while sitting in the queue — the ledger wins, no second API call.
+          if (this.blockedUsersSet.has(currentItem)) {
+            void addLog('info', 'block', `跳过 @${currentItem}：已在拉黑账本中`);
+            continue;
+          }
 
           let outcome: string | null = null;
           let failReason = '';
@@ -579,6 +606,8 @@ async function markBlockedOnX(cleanName: string): Promise<void> {
       Array.from(autoBlockManager.blockedUsersSet).slice(dropCount),
     );
   }
+  // Ledger write implies queue exit: a blocked user is no longer "pending".
+  await autoBlockManager.removeFromQueue(cleanName);
 }
 
 async function markUnblockedOnX(cleanName: string): Promise<void> {

@@ -70,4 +70,44 @@ describe('first-load hydration race', () => {
     const record = sentMessages.find((m) => m.action === 'recordSpam') as { items?: Array<{ user?: string }> } | undefined;
     expect(record?.items?.[0]?.user).toBe('spammer1');
   }, 10000);
+
+  it('hides a reply whose article subtree is injected INSIDE an existing skeleton cell', async () => {
+    vi.stubGlobal('chrome', chromeMock);
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0) as unknown as number);
+
+    window.history.pushState({}, '', '/author/status/123');
+    // Real first-open shape: the cell exists but is an empty skeleton — no
+    // article, no tweetText, nothing to evaluate yet.
+    document.body.innerHTML = `
+      <div data-testid="cellInnerDiv" id="skeleton">
+        <div class="skeleton-placeholder"></div>
+      </div>
+    `;
+
+    await import('../content/index');
+
+    // X then hydrates by inserting the full article subtree INSIDE the
+    // existing cell: the cell is an ancestor of the added node, so the
+    // observer (not a delayed re-scan) must catch it.
+    await new Promise((r) => setTimeout(r, 100));
+    const cell = document.getElementById('skeleton');
+    expect(cell).not.toBeNull();
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = `
+      <article>
+        <div data-testid="User-Name"><a href="/spammer1">垃圾号 <span>@spammer1</span></a></div>
+        <div data-testid="tweetText">比她好看的没她骚比她骚的没她好看</div>
+        <time>1h</time><a href="/spammer1/status/999">1h</a>
+      </article>
+    `;
+    cell!.appendChild(wrapper);
+
+    // Assert well before the first 600 ms delayed re-scan: the observer path
+    // itself must have hidden the reply.
+    await new Promise((r) => setTimeout(r, 350));
+
+    expect(cell?.classList.contains('x-comment-blocker-hidden')).toBe(true);
+    const record = sentMessages.find((m) => m.action === 'recordSpam') as { items?: Array<{ user?: string }> } | undefined;
+    expect(record?.items?.[0]?.user).toBe('spammer1');
+  }, 5000);
 });

@@ -624,10 +624,10 @@ export default function Dashboard() {
                         <button
                           type="button"
                           className="btn-whitelist"
-                          title={t.whitelist}
-                          onClick={() => addWhitelistFromRecord(handle)}
+                          title={isBlocked ? t.restoreWhitelist : t.whitelist}
+                          onClick={() => (isBlocked ? restoreToWhitelist(handle) : addWhitelistFromRecord(handle))}
                         >
-                          {t.whitelist}
+                          {isBlocked ? t.restoreWhitelist : t.whitelist}
                         </button>
                       )}
                       <button type="button" title={t.remove} onClick={() => removeRecord(item.id, item.time)}>

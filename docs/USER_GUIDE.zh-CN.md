@@ -110,7 +110,13 @@ X(Twitter) 评论区垃圾拦截 + 触发名单自动拉黑 + 社区共享黑名
 1. **下载**：规则与同步 → 立即同步（另有 6 小时自动同步）。
 2. **本地加词**：规则与同步 → 我的词库 → 添加/编辑/删除（仅自己生效）。
 3. **发布到云端（全员生效，需 Token）**：
-   - 在总设置填 GitHub Token（对词库仓库有 Contents 写权限）；
+   - 在总设置填 GitHub Token。获取方法（Fine-grained 细粒度令牌，最小权限）：
+     GitHub 头像 → Settings → Developer settings → Personal access tokens →
+     Fine-grained tokens → Generate new token；Resource owner 选自己，
+     Repository access 选 **Only select repositories** 并只勾
+     `smthdagg/XShield-keywords`，Permissions 里仅把 **Contents** 设为
+     **Read and write**（其余保持 No access），生成后复制 `github_pat_` 开头的
+     令牌粘贴进面板。该 Token 只能读写这一个仓库的文件内容，可随时撤销；
    - 规则与同步页点「**同步我的词库到项目仓库（覆盖远端）**」——面板当前显示的词库视图（云端词 − 禁用 + 本地自定义）就是发布内容，删除也是有意的；
    - 之后所有用户下次同步即拿到新词。
 

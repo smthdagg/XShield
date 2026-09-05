@@ -110,7 +110,14 @@ All three flows live in the dashboard:
 1. **Download**: Rules & sync → 立即同步 (plus a 6-h automatic sync).
 2. **Local words**: Rules & sync → my library → add/edit/delete (affects you only).
 3. **Publish to the cloud (effective for everyone, token required)**:
-   - fill a GitHub Token in 总设置 (Contents write access on the library repo);
+   - fill a GitHub Token in 总设置. How to create one (fine-grained, least
+     privilege): GitHub avatar → Settings → Developer settings → Personal
+     access tokens → Fine-grained tokens → Generate new token; Resource owner
+     = yourself, Repository access = **Only select repositories** (pick
+     `smthdagg/XShield-keywords` only), Permissions: set **Contents** to
+     **Read and write** and leave everything else at No access. Copy the
+     `github_pat_…` token into the panel. It can only read/write that one
+     repo's file contents and is revocable anytime;
    - Rules & sync → **同步我的词库到项目仓库** — the panel's current library
      view (cloud words − disabled + local custom) is what gets published,
      with REPLACE semantics (deletions are intentional);

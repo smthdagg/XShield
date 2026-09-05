@@ -1061,7 +1061,7 @@ function base64ToUtf8(base64: string): string {
  * keywords.txt. REPLACE semantics — the owner curates the list, deletions
  * are intentional. Requires a token with push access.
  */
-async function shareKeywordsToProject(): Promise<{ success: boolean; total?: number; reason?: string }> {
+async function shareKeywordsToProject(): Promise<{ success: boolean; total?: number; reason?: string; detail?: string }> {
   try {
     const stored = await chrome.storage.local.get(
       getStorageDefaults('githubToken', 'cloudOwnerRepo', 'cloudKeywords', 'keywords', 'disabledCloudKeywords', 'cloudEnabled'),
@@ -1088,19 +1088,26 @@ async function shareKeywordsToProject(): Promise<{ success: boolean; total?: num
       'content-type': 'application/json',
     };
     let sha: string | null = null;
+    let remoteList: string[] = [];
     const getRes = await fetch(`${api}?ref=main`, { headers, signal: AbortSignal.timeout(15000) });
     if (getRes.ok) {
-      const meta = (await getRes.json()) as { sha?: string };
+      const meta = (await getRes.json()) as { sha?: string; content?: string };
       sha = meta.sha ?? null;
+      if (meta.content) remoteList = parseKeywords(base64ToUtf8(meta.content));
     } else if (getRes.status !== 404) {
       return { success: false, reason: `获取 keywords.txt 失败: HTTP ${getRes.status}` };
     }
+
+    const remoteSet = new Set(remoteList);
+    const addedList = localList.filter((k) => !remoteSet.has(k));
+    const removedList = remoteList.filter((k) => !new Set(localList).has(k));
+    const at = new Date().toLocaleString('zh-CN', { hour12: false });
 
     const putRes = await fetch(api, {
       method: 'PUT',
       headers,
       body: JSON.stringify({
-        message: `publish ${localList.length} keywords from XShield dashboard`,
+        message: `publish keywords: local ${localList.length}, prev remote ${remoteList.length}, +${addedList.length}/-${removedList.length} — ${at}`,
         content: utf8ToBase64(`${localList.join('\n')}\n`),
         ...(sha ? { sha } : {}),
       }),
@@ -1110,14 +1117,15 @@ async function shareKeywordsToProject(): Promise<{ success: boolean; total?: num
       const detail = await putRes.text().catch(() => '');
       return { success: false, reason: `提交失败: HTTP ${putRes.status} ${detail.slice(0, 120)}` };
     }
-    void addLog('info', 'sync', `词库已发布到项目仓库：${localList.length} 行（覆盖式）`);
-    return { success: true, total: localList.length };
+    const summary = `发布成功 ${at}：本地 ${localList.length} 行（云端原有 ${remoteList.length}：新增 ${addedList.length} / 移除 ${removedList.length}）`;
+    void addLog('info', 'sync', `词库已发布：${summary}`);
+    return { success: true, total: localList.length, detail: summary };
   } catch (error) {
     return { success: false, reason: error instanceof Error ? error.message : String(error) };
   }
 }
 
-async function shareHandlesToProject(): Promise<{ success: boolean; total?: number; reason?: string }> {
+async function shareHandlesToProject(): Promise<{ success: boolean; total?: number; reason?: string; detail?: string; added?: number; localCount?: number; cloudCount?: number }> {
   try {
     const stored = await chrome.storage.local.get(
       getStorageDefaults('githubToken', 'cloudOwnerRepo', 'blockedUsersOnX'),
@@ -1137,6 +1145,7 @@ async function shareHandlesToProject(): Promise<{ success: boolean; total?: numb
     if (handles.length === 0) {
       return { success: false, reason: '本地没有已拉黑用户可共享' };
     }
+    const at = new Date().toLocaleString('zh-CN', { hour12: false });
 
     const api = `https://api.github.com/repos/${ownerRepo}/contents/handles.txt`;
     const headers: Record<string, string> = {
@@ -1156,12 +1165,15 @@ async function shareHandlesToProject(): Promise<{ success: boolean; total?: numb
       return { success: false, reason: `获取 handles.txt 失败: HTTP ${getRes.status}` };
     }
 
+    const existingSet = new Set(existing);
+    const addedList = handles.filter((name) => !existingSet.has(name));
     const merged = Array.from(new Set([...existing, ...handles]));
+
     const putRes = await fetch(api, {
       method: 'PUT',
       headers,
       body: JSON.stringify({
-        message: `share ${handles.length} blocked handles from XShield`,
+        message: `share handles: local ${handles.length}, cloud ${existing.length}, +${addedList.length} new, merged ${merged.length} — ${at}`,
         content: utf8ToBase64(`${merged.join('\n')}\n`),
         ...(sha ? { sha } : {}),
       }),
@@ -1171,8 +1183,9 @@ async function shareHandlesToProject(): Promise<{ success: boolean; total?: numb
       const detail = await putRes.text().catch(() => '');
       return { success: false, reason: `提交失败: HTTP ${putRes.status} ${detail.slice(0, 120)}` };
     }
-    void addLog('info', 'sync', `共享拉黑名单成功：合并后 ${merged.length} 个 handle`);
-    return { success: true, total: merged.length };
+    const summary = `共享成功 ${at}：本地 ${handles.length} 个 / 云端原有 ${existing.length} 个 / 本次新增 ${addedList.length} 个 / 合并后 ${merged.length} 个`;
+    void addLog('info', 'sync', `共享拉黑名单：${summary}`);
+    return { success: true, total: merged.length, added: addedList.length, localCount: handles.length, cloudCount: existing.length, detail: summary };
   } catch (error) {
     return { success: false, reason: error instanceof Error ? error.message : String(error) };
   }

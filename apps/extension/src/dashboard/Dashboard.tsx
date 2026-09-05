@@ -392,12 +392,8 @@ export default function Dashboard() {
     setSyncing(true);
     void send({ action: 'shareKeywords' })
       .then((res) => {
-        const result = res as { success?: boolean; total?: number; reason?: string };
-        setStatus(
-          result?.success
-            ? `${t.shareKeywordsDone.replace('{count}', String(result.total ?? 0))}`
-            : result?.reason || t.shareKeywordsFail,
-        );
+        const result = res as { success?: boolean; detail?: string; reason?: string };
+        setStatus(result?.success ? result.detail ?? t.shareKeywordsDone : result?.reason || t.shareKeywordsFail);
       })
       .catch(() => setStatus(t.shareKeywordsFail))
       .finally(() => setSyncing(false));
@@ -408,12 +404,8 @@ export default function Dashboard() {
     setSyncing(true);
     void send({ action: 'shareHandles' })
       .then((res) => {
-        const result = res as { success?: boolean; total?: number; reason?: string };
-        setStatus(
-          result?.success
-            ? `${t.shareDone.replace('{count}', String(result.total ?? 0))}`
-            : result?.reason || t.shareFail,
-        );
+        const result = res as { success?: boolean; detail?: string; reason?: string };
+        setStatus(result?.success ? result.detail ?? t.shareDone : result?.reason || t.shareFail);
       })
       .catch(() => setStatus(t.shareFail))
       .finally(() => setSyncing(false));

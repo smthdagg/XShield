@@ -1065,9 +1065,6 @@ export default function Dashboard() {
                     <option value="zh-CN">{t.simplifiedChinese}</option>
                     <option value="zh-TW">{t.traditionalChinese}</option>
                     <option value="en">{t.english}</option>
-                    <option value="ja">{t.japanese}</option>
-                    <option value="ko">{t.korean}</option>
-                    <option value="fr">{t.french}</option>
                   </select>
                 </label>
               </div>

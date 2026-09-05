@@ -18,6 +18,7 @@ let blockSpecialChars = false;
 let blockEmoji = false;
 let blockGrok = false;
 let filterEnabled = true;
+let communityHandleSet = new Set<string>();
 let highlightMode = false;
 let filterTimer: number | null = null;
 let filterVersion = 0;
@@ -273,6 +274,19 @@ function detectSpam(
 
   if (stableHandle && whitelistSet.has(stableHandle)) {
     return { isSpam: false };
+  }
+
+  // Community blocklist: handles shared through the project repository are
+  // treated as confirmed spam sources and enter the pending flow directly.
+  if (stableHandle && communityHandleSet.has(stableHandle)) {
+    return {
+      isSpam: true,
+      isAutoBlock: true,
+      blockReason: '社区共享',
+      userName,
+      stableHandle,
+      displayName,
+    };
   }
 
   if (blockGrok && hasGrokCard(tweet)) {
@@ -538,6 +552,7 @@ async function init(): Promise<void> {
         'blockGrok',
         'enabled',
         'whitelist',
+        'communityHandles',
         'highlightMode',
       ),
     );
@@ -550,6 +565,7 @@ async function init(): Promise<void> {
     filterEnabled = Boolean(items.enabled);
     highlightMode = Boolean(items.highlightMode);
     whitelistSet = new Set((items.whitelist as string[]) ?? []);
+    communityHandleSet = new Set((items.communityHandles as string[]) ?? []);
 
     await mergeKeywords();
     filterTweets();
@@ -667,6 +683,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
   if (changes.whitelist) {
     whitelistSet = new Set((changes.whitelist.newValue as string[]) ?? []);
+    needsFilter = true;
+  }
+  if (changes.communityHandles) {
+    communityHandleSet = new Set((changes.communityHandles.newValue as string[]) ?? []);
     needsFilter = true;
   }
   if (changes.highlightMode) {

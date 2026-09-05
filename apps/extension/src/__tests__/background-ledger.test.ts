@@ -418,6 +418,40 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
     expect(storageData.blockedUsersOnX).toEqual(['back2']);
   });
 
+  it('shareHandles merges the block ledger into the project handles.txt', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchImpl: FetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url.includes('handles.txt')) {
+        if (init?.method === 'PUT') {
+          return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ sha: 'abc123', content: 'c3BhbW1lcjE=' }), { status: 200 }); // base64: spammer1
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as unknown as FetchImpl;
+    await bootstrap({ githubToken: 'tok', blockedUsersOnX: ['spammer1', 'spammer2'] }, fetchImpl);
+
+    const res = (await dispatch({ action: 'shareHandles' })) as { success?: boolean; total?: number };
+    expect(res?.success).toBe(true);
+    expect(res?.total).toBe(2); // existing spammer1 + local spammer2, deduped
+
+    const put = calls.find((c) => c.init?.method === 'PUT');
+    expect(put).toBeDefined();
+    const body = JSON.parse(String(put?.init?.body ?? '{}'));
+    const decoded = atob(body.content);
+    expect(decoded).toContain('spammer1');
+    expect(decoded).toContain('spammer2');
+  });
+
+  it('shareHandles without a token fails with a clear reason', async () => {
+    await bootstrap();
+    const res = (await dispatch({ action: 'shareHandles' })) as { success?: boolean; reason?: string };
+    expect(res?.success).toBe(false);
+    expect(res?.reason).toContain('Token');
+  });
+
   it('whitelist chokepoint: blockUserOnX refuses whitelisted users', async () => {
     await bootstrap({ whitelist: ['pacifist1'] });
     const res = (await dispatch({ action: 'blockUserOnX', screenName: 'pacifist1' })) as {

@@ -662,6 +662,10 @@ chrome.runtime.onMessage.addListener((message: Record<string, unknown>, _sender,
     });
     return true;
   }
+  if (message.action === 'shareHandles') {
+    void shareHandlesToProject().then(sendResponse);
+    return true;
+  }
   if (message.action === 'blockAllHistoryUsers') {
     void blockAllHistoryUsers((message.users as string[]) ?? []).then(sendResponse);
     return true;
@@ -909,6 +913,86 @@ async function handleRecordSpam(items: SpamItem[]): Promise<void> {
       spamBatchTimer = null;
       void flushSpamBatch();
     }, 50);
+  }
+}
+
+function utf8ToBase64(text: string): string {
+  const bytes = new TextEncoder().encode(text);
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function base64ToUtf8(base64: string): string {
+  const binary = atob(base64);
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
+/**
+ * Owner/contributor action: merge the local block ledger into the project's
+ * shared handles.txt so every user's next sync picks the handles up. Requires
+ * a GitHub token with push access to the target repo; ordinary users simply
+ * never configure one and stay download-only.
+ */
+async function shareHandlesToProject(): Promise<{ success: boolean; total?: number; reason?: string }> {
+  try {
+    const stored = await chrome.storage.local.get(
+      getStorageDefaults('githubToken', 'cloudOwnerRepo', 'blockedUsersOnX'),
+    );
+    const token = stored.githubToken as string;
+    if (!token) {
+      return { success: false, reason: '请先在设置中填写 GitHub Token' };
+    }
+    const ownerRepo = (stored.cloudOwnerRepo as string) || DEFAULT_CLOUD_OWNER_REPO;
+    const handles = Array.from(
+      new Set(
+        ((stored.blockedUsersOnX as string[]) ?? [])
+          .map(extractCleanScreenName)
+          .filter(Boolean),
+      ),
+    );
+    if (handles.length === 0) {
+      return { success: false, reason: '本地没有已拉黑用户可共享' };
+    }
+
+    const api = `https://api.github.com/repos/${ownerRepo}/contents/handles.txt`;
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github+json',
+      'content-type': 'application/json',
+    };
+
+    let sha: string | null = null;
+    let existing: string[] = [];
+    const getRes = await fetch(`${api}?ref=main`, { headers, signal: AbortSignal.timeout(15000) });
+    if (getRes.ok) {
+      const meta = (await getRes.json()) as { sha?: string; content?: string };
+      sha = meta.sha ?? null;
+      if (meta.content) existing = parseKeywords(base64ToUtf8(meta.content));
+    } else if (getRes.status !== 404) {
+      return { success: false, reason: `获取 handles.txt 失败: HTTP ${getRes.status}` };
+    }
+
+    const merged = Array.from(new Set([...existing, ...handles]));
+    const putRes = await fetch(api, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({
+        message: `share ${handles.length} blocked handles from XShield`,
+        content: utf8ToBase64(`${merged.join('\n')}\n`),
+        ...(sha ? { sha } : {}),
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!putRes.ok) {
+      const detail = await putRes.text().catch(() => '');
+      return { success: false, reason: `提交失败: HTTP ${putRes.status} ${detail.slice(0, 120)}` };
+    }
+    void addLog('info', 'sync', `共享拉黑名单成功：合并后 ${merged.length} 个 handle`);
+    return { success: true, total: merged.length };
+  } catch (error) {
+    return { success: false, reason: error instanceof Error ? error.message : String(error) };
   }
 }
 

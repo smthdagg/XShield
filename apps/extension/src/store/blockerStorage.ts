@@ -64,6 +64,8 @@ const STORAGE_DEFAULTS: Record<string, unknown> = {
   autoBlockQueue: [],
   autoBlockEta: {},
   autoBlockGraceMinutes: 30,
+  communityHandles: [],
+  githubToken: '',
   autoBlockDailyLimit: 300,
   autoBlockBatchLimit: 30,
   autoBlockDelaySeconds: 5,
@@ -100,6 +102,13 @@ export function parseKeywords(text: string): string[] {
     }
   }
   return result;
+}
+
+function handleApiUrl(ownerRepo: string): string {
+  return `https://api.github.com/repos/${ownerRepo}/contents/handles.txt`;
+}
+function handleCdnUrl(ownerRepo: string): string {
+  return `https://fastly.jsdelivr.net/gh/${ownerRepo}@main/handles.txt`;
 }
 
 export async function syncCloudKeywords(ownerRepo: string = DEFAULT_CLOUD_OWNER_REPO): Promise<boolean> {
@@ -176,9 +185,33 @@ export async function syncCloudKeywords(ownerRepo: string = DEFAULT_CLOUD_OWNER_
     const cloudListSet = new Set(cloudList);
     const cleanedDisabled = disabledCloudKeywords.filter((k) => cloudListSet.has(k));
 
+    // Community blocklist (handles.txt): a separate file so account handles
+    // never mix back into the content keyword library. Missing file (fresh
+    // repo) = empty list, never a sync failure.
+    let communityHandles: string[] = [];
+    try {
+      let hResp: Response;
+      try {
+        hResp = await fetch(handleApiUrl(ownerRepo), { cache: 'no-store', signal: AbortSignal.timeout(15000) });
+        if (!hResp.ok) throw new Error(`API HTTP ${hResp.status}`);
+      } catch {
+        try {
+          hResp = await fetch(`${handleCdnUrl(ownerRepo)}?t=${Date.now()}`, { cache: 'no-store', signal: AbortSignal.timeout(15000) });
+          if (!hResp.ok) throw new Error(`CDN HTTP ${hResp.status}`);
+        } catch {
+          hResp = await fetch(browserApi.runtime.getURL('handles.txt'), { cache: 'no-store' });
+          if (!hResp.ok) throw new Error('bundled handles.txt missing');
+        }
+      }
+      communityHandles = parseKeywords(await hResp.text());
+    } catch {
+      communityHandles = [];
+    }
+
     await browserApi.storage.local.set({
       cloudKeywords: cloudList.join('\n'),
       disabledCloudKeywords: cleanedDisabled,
+      communityHandles,
       cloudETag: newETag,
       lastSyncTime: Date.now(),
       syncStatus: 'ok',

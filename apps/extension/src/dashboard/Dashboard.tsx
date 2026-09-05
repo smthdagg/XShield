@@ -66,6 +66,8 @@ const DEFAULTS: Record<string, unknown> = {
   queueInfo: {} as Record<string, { displayName?: string; text?: string }>,
   autoBlockToday: 0,
   autoBlockPausedUntil: 0,
+  communityHandles: [] as string[],
+  githubToken: '',
   autoBlockDailyLimit: 300,
   autoBlockBatchLimit: 30,
   autoBlockDelaySeconds: 5,
@@ -353,6 +355,22 @@ export default function Dashboard() {
     setValue('disabledCloudKeywords', Array.from(next));
   };
 
+  /** Owner/contributor action: push the local block ledger to the project. */
+  const shareHandles = (): void => {
+    setSyncing(true);
+    void send({ action: 'shareHandles' })
+      .then((res) => {
+        const result = res as { success?: boolean; total?: number; reason?: string };
+        setStatus(
+          result?.success
+            ? `${t.shareDone.replace('{count}', String(result.total ?? 0))}`
+            : result?.reason || t.shareFail,
+        );
+      })
+      .catch(() => setStatus(t.shareFail))
+      .finally(() => setSyncing(false));
+  };
+
   /** One-click environment snapshot: real storage state + recent logs. */
   const exportDiagnostics = (): void => {
     const diag = {
@@ -364,6 +382,7 @@ export default function Dashboard() {
         whitelist: whitelist.length,
         blockedHistory: blockedHistory.length,
         blockedUsers: blockedUsersOnX.length,
+        communityHandles: ((state.communityHandles as string[]) ?? []).length,
         pendingQueue: pendingQueue.length,
         autoBlockToday: Number(state.autoBlockToday ?? 0),
         pausedUntil: Number(state.autoBlockPausedUntil ?? 0),
@@ -706,6 +725,20 @@ export default function Dashboard() {
               </label>
             </div>
             <p className="hint">{t.autoBlockNote}</p>
+            <p className="hint">{t.shareHint}</p>
+            <div className="form-grid inline">
+              <label>
+                <span>{t.githubTokenLabel}</span>
+                <input
+                  type="password"
+                  value={String(state.githubToken ?? '')}
+                  onChange={(e) => setValue('githubToken', e.currentTarget.value)}
+                />
+              </label>
+              <button className="plain-button" type="button" disabled={syncing} onClick={shareHandles}>
+                <Upload size={16} className={syncing ? 'spin' : ''} /> {t.shareHandles}
+              </button>
+            </div>
             <div className="form-grid inline">
               <button className="plain-button" type="button" onClick={exportDiagnostics} title={t.diagnostics}>
                 <Download size={16} /> {t.diagnostics}
@@ -993,6 +1026,20 @@ export default function Dashboard() {
             </div>
             <p className="hint">{t.cloudSourceHint}</p>
             <p className="hint">{t.autoBlockNote}</p>
+            <p className="hint">{t.shareHint}</p>
+            <div className="form-grid inline">
+              <label>
+                <span>{t.githubTokenLabel}</span>
+                <input
+                  type="password"
+                  value={String(state.githubToken ?? '')}
+                  onChange={(e) => setValue('githubToken', e.currentTarget.value)}
+                />
+              </label>
+              <button className="plain-button" type="button" disabled={syncing} onClick={shareHandles}>
+                <Upload size={16} className={syncing ? 'spin' : ''} /> {t.shareHandles}
+              </button>
+            </div>
             <div className="form-grid inline">
               <button className="plain-button" type="button" onClick={exportDiagnostics} title={t.diagnostics}>
                 <Download size={16} /> {t.diagnostics}

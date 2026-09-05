@@ -18,6 +18,7 @@ const storageData: Record<string, unknown> = {
   blockGrok: false,
   enabled: true,
   whitelist: [] as string[],
+  communityHandles: ['spammy1'],
   highlightMode: false,
 };
 
@@ -77,6 +78,13 @@ describe('content script end-to-end', () => {
           <time>1h</time><a href="/spammer1/status/456">1h</a>
         </article>
       </div>
+      <div data-testid="cellInnerDiv" id="community1">
+        <article>
+          <div data-testid="User-Name"><a href="/spammy1">分享号 <span>@spammy1</span></a></div>
+          <div data-testid="tweetText">完全无害的正常内容文本</div>
+          <time>1h</time><a href="/spammy1/status/777">1h</a>
+        </article>
+      </div>
       <div data-testid="cellInnerDiv" id="reply2">
         <article>
           <div data-testid="User-Name"><a href="/normal2">正常人 <span>@normal2</span></a></div>
@@ -94,10 +102,13 @@ describe('content script end-to-end', () => {
     const spam = document.getElementById('reply1');
     const normal = document.getElementById('reply2');
     const main = document.getElementById('main');
+    const community = document.getElementById('community1');
 
     expect(spam?.classList.contains('x-comment-blocker-hidden')).toBe(true);
     expect(normal?.classList.contains('x-comment-blocker-hidden')).toBe(false);
     expect(main?.classList.contains('x-comment-blocker-hidden')).toBe(false);
+    // Community-shared handle: clean text still hidden + auto-block flagged.
+    expect(community?.classList.contains('x-comment-blocker-hidden')).toBe(true);
 
     const record = sentMessages.find((message) => message.action === 'recordSpam') as
       | { items?: Array<{ user?: string; text?: string; isAutoBlock?: boolean; displayName?: string }> }

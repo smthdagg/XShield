@@ -1,48 +1,32 @@
-# Guide utilisateur XShield
+# XShield Guide utilisateur (aperçu rapide en français)
 
-## 1. Installation
+> Guide complet : [简体中文版](USER_GUIDE.zh-CN.md) ou [English](USER_GUIDE.en.md) (1.0.0+).
 
-1. Ouvrez `chrome://extensions` dans Chrome.
-2. Activez le **mode développeur**.
-3. Cliquez sur **Load unpacked**.
-4. Sélectionnez `apps/extension/dist`.
-5. Épinglez XShield dans la barre d'outils Chrome.
+## Modèle principal
 
-Construire depuis le code source :
-
-```bash
-corepack enable
-pnpm install
-pnpm build
+```
+Mot-clé détecté → réponse masquée aussitôt, l'auteur entre dans « 触发记录 » (liste en attente)
+  → file d'attente de blocage avec 30 minutes de délai
+      ├─ sans intervention → blocage automatique au rythme limité
+      ├─ liste blanche / suppression → exemption permanente + sortie de file
+      └─ bloquer / bloquer la sélection(N) → exécution immédiate
+  → succès → déplacé vers « 已拉黑 » (bloqués)
 ```
 
-Chargez ensuite `apps/extension/dist`.
+Une seule bibliothèque de mots-clés (cloud + personnalisé local).
 
-## 2. Créer des règles
+## Démarrage rapide
 
-Dans **Rules**, créez des règles de détection.
+1. `chrome://extensions` → Mode développeur → charger `apps/extension/dist`
+2. Connexion à x.com ; tableau de bord → Rules & sync → Synchroniser
+3. Parcourir X : les réponses détectées sont masquées, les auteurs entrent dans la liste
+4. Traiter la liste sur la page des enregistrements (bloquer / liste blanche / supprimer)
+5. Page des blocages : statistiques et résultats (300 plus récents paginés + recherche)
 
-- `keyword` : mot-clé simple, un par ligne.
-- `regex` : expression régulière, une par ligne.
-- Champs analysés : username, displayName, bio, content.
-- Score : score de risque ajouté quand la règle correspond.
+## Limitation (réglable sur la page des enregistrements)
 
-Les publications détectées sont surlignées en jaune clair, et les utilisateurs sont ajoutés à la liste des candidats.
+300/jour (réglable), lots de 30 (réglable, pause de 15 min), intervalle 5 s ±5 s (réglable), pause 15 min sur 429.
 
-## 3. Examiner les candidats
+## Liste noire communautaire
 
-Dans **Candidate Users**, vérifiez l'avatar, le lien du profil, la bio, les abonnés et la raison de détection. Ajoutez les faux positifs à la liste blanche et les cibles confirmées à la file de blocage.
-
-## 4. Exécuter la file de blocage
-
-- **Run Batch** : respecte la taille du lot, l'intervalle et le mode configurés.
-- **Manual Block Now** : ignore l'intervalle configuré. Trop de blocages en une seule fois peuvent affecter le compte.
-- **Start/Stop** : met en pause ou reprend la file automatique.
-
-## 5. Exporter les utilisateurs bloqués
-
-Dans **Blocked Users**, exportez les données en TXT, CSV, JSON, NDJSON ou SQL.
-
-## 6. Avertissement sur le mode réel
-
-Le mode réel dépend de la session X/Twitter ouverte dans Chrome. Il peut cesser de fonctionner si X modifie son API web, sa connexion, sa gestion CSRF ou sa structure de page. Utilisez des lots prudents et des intervalles suffisants.
+`handles.txt` est téléchargé à chaque synchronisation ; avec un GitHub Token, vos handles bloqués fusionnent dans le dépôt du projet pour tous les utilisateurs. Sans token, téléchargement seul.

@@ -1,78 +1,29 @@
-# GitHub Upload Guide
+# Cloud sync & sharing (1.0.0)
 
-## 1. 创建仓库
+> The 0.5.x "upload full keyword library to your own repo" feature was removed
+> in 0.6.0. Cloud data now flows through the project repository
+> `smthdagg/XShield-keywords` with two separate files.
 
-在 GitHub 新建仓库，例如：
+## Files
 
-```text
-xshield
-```
+| File | Content | Direction |
+|------|---------|-----------|
+| `keywords.txt` | content rules (cleaned: 561 lines — Chinese phrases, brand words, `t.cn`, structural regexes) | download-only for all users |
+| `handles.txt` | community shared blocklist (blocked handles, merge-only, permanent) | download for all users; upload for token holders |
 
-建议勾选：
+## Download path (all users)
 
-- Public
-- Issues
-- Discussions
+Each sync (6-h alarm or manual 立即同步) fetches both files with a three-tier
+fallback: GitHub Contents API → jsDelivr CDN (`?t=` cache-buster) → bundled
+copy inside the extension. `handles.txt` missing = empty list, never an error.
 
-不要让 GitHub 自动生成 README、LICENSE 或 `.gitignore`，本项目已经包含。
+## Upload path (owner / contributors, optional)
 
-## 2. 替换占位信息
+总设置 → GitHub Token (Contents: read/write on the library repo) →
+共享拉黑名单到项目仓库: the local block ledger is merged into `handles.txt`
+(GET sha → union → PUT base64). Deduplicated, never overwrites others'
+entries. Without a token nothing is ever uploaded.
 
-上传前搜索并替换：
-
-```text
-your-name/xshield
-your-name
-security@example.com
-```
-
-重点文件：
-
-- `apps/extension/src/projectInfo.ts`
-- `apps/extension/manifest.json`
-- `.github/FUNDING.yml`
-- `README.md`
-- `SECURITY.md`
-- `docs/SPONSORSHIP.md`
-
-## 3. 初始化 Git
-
-```bash
-git init
-git add .
-git commit -m "Initial open source release"
-git branch -M main
-git remote add origin https://github.com/your-name/xshield.git
-git push -u origin main
-```
-
-## 4. 发布 Release
-
-建议创建 tag：
-
-```bash
-git tag v0.3.0
-git push origin v0.3.0
-```
-
-Release 标题：
-
-```text
-XShield v0.3.0
-```
-
-Release 内容可复制 `CHANGELOG.md` 中 `0.3.0` 部分。
-
-## 5. Chrome 扩展测试
-
-GitHub 上传完成后，本地继续加载：
-
-```text
-apps/extension/dist
-```
-
-每次修改代码后运行：
-
-```bash
-pnpm build
-```
+Keeping the project's handle directory clean: delete a 社区共享 record to
+permanently opt that handle out of the feeder on your machine, and consider
+removing it from `handles.txt` upstream if it was shared by mistake.

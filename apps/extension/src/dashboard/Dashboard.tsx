@@ -66,6 +66,9 @@ const DEFAULTS: Record<string, unknown> = {
   queueInfo: {} as Record<string, { displayName?: string; text?: string }>,
   autoBlockToday: 0,
   autoBlockPausedUntil: 0,
+  autoBlockDailyLimit: 300,
+  autoBlockBatchLimit: 30,
+  autoBlockDelaySeconds: 5,
   blockedUsersOnX: [] as string[],
   lastSyncTime: 0,
   syncStatus: '',
@@ -670,6 +673,38 @@ export default function Dashboard() {
                 </article>
               </div>
               <p className="hint">{t.cloudSourceHint}</p>
+            <div className="form-grid inline">
+              <label>
+                <span>{t.dailyLimitLabel}</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={1000}
+                  value={String(state.autoBlockDailyLimit ?? 300)}
+                  onChange={(e) => setValue('autoBlockDailyLimit', Math.max(1, Number(e.currentTarget.value) || 300))}
+                />
+              </label>
+              <label>
+                <span>{t.batchLimitLabel}</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={200}
+                  value={String(state.autoBlockBatchLimit ?? 30)}
+                  onChange={(e) => setValue('autoBlockBatchLimit', Math.max(1, Number(e.currentTarget.value) || 30))}
+                />
+              </label>
+              <label>
+                <span>{t.delaySecondsLabel}</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={600}
+                  value={String(state.autoBlockDelaySeconds ?? 5)}
+                  onChange={(e) => setValue('autoBlockDelaySeconds', Math.max(0, Number(e.currentTarget.value) || 0))}
+                />
+              </label>
+            </div>
             <p className="hint">{t.autoBlockNote}</p>
             <div className="form-grid inline">
               <button className="plain-button" type="button" onClick={exportDiagnostics} title={t.diagnostics}>

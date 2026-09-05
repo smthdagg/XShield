@@ -323,6 +323,9 @@ class AutoBlockManager {
         'autoBlockQueue',
         'autoBlockEta',
         'autoBlockGraceMinutes',
+        'autoBlockDailyLimit',
+        'autoBlockBatchLimit',
+        'autoBlockDelaySeconds',
         'autoBlockToday',
         'autoBlockLastDate',
         'autoBlockPausedUntil',
@@ -334,6 +337,11 @@ class AutoBlockManager {
     this.queue = (items.autoBlockQueue as string[]) ?? [];
     this.eta = (items.autoBlockEta as Record<string, number>) ?? {};
     this.graceMinutes = (items.autoBlockGraceMinutes as number) ?? 30;
+    this.dailyLimit = Math.max(1, (items.autoBlockDailyLimit as number) ?? 300);
+    this.batchLimit = Math.max(1, (items.autoBlockBatchLimit as number) ?? 30);
+    const delaySeconds = Math.max(0, (items.autoBlockDelaySeconds as number) ?? 5);
+    this.minDelayMs = delaySeconds * 1000;
+    this.maxDelayMs = delaySeconds * 1000 + 5000;
     this.countToday = (items.autoBlockToday as number) ?? 0;
     this.lastDate = (items.autoBlockLastDate as string) ?? '';
     this.pausedUntil = (items.autoBlockPausedUntil as number) ?? 0;

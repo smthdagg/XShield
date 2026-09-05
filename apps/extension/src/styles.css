@@ -1160,24 +1160,25 @@ input[type="checkbox"] {
 }
 
 .settings-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
-  gap: 8px 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
 }
 
 .settings-grid > label {
-  display: flex;
+  display: inline-flex;
   flex-direction: row;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   background: #ffffff;
   border: 1px solid #e4eae6;
   border-radius: 8px;
-  padding: 8px 12px;
-  min-height: 38px;
+  padding: 7px 12px;
+  min-height: 36px;
   font-size: 13px;
   color: #2c3a33;
+  margin: 0;
+  width: fit-content;
 }
 
 .settings-grid > label > span:first-child {

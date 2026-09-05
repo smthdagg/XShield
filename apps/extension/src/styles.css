@@ -1144,3 +1144,20 @@ input[type="checkbox"] {
   font-size: 12px;
   cursor: pointer;
 }
+
+.settings-section {
+  margin-bottom: 22px;
+}
+
+.settings-section h3 {
+  margin: 0 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed #e3e8e5;
+  font-size: 13px;
+  font-weight: 700;
+  color: #44544b;
+}
+
+.settings-grid.compact {
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}

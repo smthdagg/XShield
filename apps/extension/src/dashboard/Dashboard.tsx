@@ -1041,86 +1041,102 @@ export default function Dashboard() {
 
         {view === 'settings' && (
           <DataPanel title={t.settings}>
-            <div className="settings-grid">
-              <label className="check-label">
-                <span>{t.enabled}</span>
-                <Toggle checked={Boolean(state.enabled)} onChange={(v) => setValue('enabled', v)} />
-              </label>
-              <label>
-                <span>{t.displayMode}</span>
-                <select
-                  value={state.highlightMode ? 'highlight' : 'hide'}
-                  onChange={(e) => setValue('highlightMode', e.currentTarget.value === 'highlight')}
-                >
-                  <option value="hide">{t.modeHide}</option>
-                  <option value="highlight">{t.modeHighlight}</option>
-                </select>
-              </label>
-              <label className="check-label">
-                <span>{t.checkUsername}</span>
-                <Toggle checked={Boolean(state.checkUsername)} onChange={(v) => setValue('checkUsername', v)} />
-              </label>
-              <label className="check-label">
-                <span>{t.onlyComments}</span>
-                <Toggle checked={Boolean(state.onlyComments)} onChange={(v) => setValue('onlyComments', v)} />
-              </label>
-              <label className="check-label">
-                <span>{t.blockSpecialChars}</span>
-                <Toggle checked={Boolean(state.blockSpecialChars)} onChange={(v) => setValue('blockSpecialChars', v)} />
-              </label>
-              <label className="check-label">
-                <span>{t.blockEmoji}</span>
-                <Toggle checked={Boolean(state.blockEmoji)} onChange={(v) => setValue('blockEmoji', v)} />
-              </label>
-              <label className="check-label">
-                <span>{t.blockGrok}</span>
-                <Toggle checked={Boolean(state.blockGrok)} onChange={(v) => setValue('blockGrok', v)} />
-              </label>
-              <label className="check-label">
-                <span>{t.cloudEnabled}</span>
-                <Toggle checked={Boolean(state.cloudEnabled)} onChange={(v) => setValue('cloudEnabled', v)} />
-              </label>
-              <label>
-                <span>{t.language}</span>
-                <select value={String(state.language ?? 'system')} onChange={(e) => setValue('language', e.currentTarget.value)}>
-                  <option value="system">{t.system}</option>
-                  <option value="zh-CN">{t.simplifiedChinese}</option>
-                  <option value="zh-TW">{t.traditionalChinese}</option>
-                  <option value="en">{t.english}</option>
-                  <option value="ja">{t.japanese}</option>
-                  <option value="ko">{t.korean}</option>
-                  <option value="fr">{t.french}</option>
-                </select>
-              </label>
-              <label>
-                <span>{t.cloudOwnerRepo}</span>
-                <input
-                  value={String(state.cloudOwnerRepo ?? '')}
-                  placeholder="默认 smthdagg/XShield-keywords"
-                  onChange={(e) => setValue('cloudOwnerRepo', e.currentTarget.value)}
-                />
-              </label>
+            <div className="settings-section">
+              <h3>{t.secRuntime}</h3>
+              <div className="settings-grid">
+                <label className="check-label">
+                  <span>{t.enabled}</span>
+                  <Toggle checked={Boolean(state.enabled)} onChange={(v) => setValue('enabled', v)} />
+                </label>
+                <label>
+                  <span>{t.displayMode}</span>
+                  <select
+                    value={state.highlightMode ? 'highlight' : 'hide'}
+                    onChange={(e) => setValue('highlightMode', e.currentTarget.value === 'highlight')}
+                  >
+                    <option value="hide">{t.modeHide}</option>
+                    <option value="highlight">{t.modeHighlight}</option>
+                  </select>
+                </label>
+                <label>
+                  <span>{t.language}</span>
+                  <select value={String(state.language ?? 'system')} onChange={(e) => setValue('language', e.currentTarget.value)}>
+                    <option value="system">{t.system}</option>
+                    <option value="zh-CN">{t.simplifiedChinese}</option>
+                    <option value="zh-TW">{t.traditionalChinese}</option>
+                    <option value="en">{t.english}</option>
+                    <option value="ja">{t.japanese}</option>
+                    <option value="ko">{t.korean}</option>
+                    <option value="fr">{t.french}</option>
+                  </select>
+                </label>
+              </div>
             </div>
-            <p className="hint">{t.cloudSourceHint}</p>
-            <p className="hint">{t.autoBlockNote}</p>
-            <p className="hint">{t.shareHint}</p>
-            <div className="form-grid inline">
-              <label>
-                <span>{t.githubTokenLabel}</span>
-                <input
-                  type="password"
-                  value={String(state.githubToken ?? '')}
-                  onChange={(e) => setValue('githubToken', e.currentTarget.value)}
-                />
-              </label>
-              <button className="plain-button" type="button" disabled={syncing} onClick={shareHandles}>
-                <Upload size={16} className={syncing ? 'spin' : ''} /> {t.shareHandles}
-              </button>
+
+            <div className="settings-section">
+              <h3>{t.secFilters}</h3>
+              <div className="settings-grid compact">
+                <label className="check-label">
+                  <span>{t.checkUsername}</span>
+                  <Toggle checked={Boolean(state.checkUsername)} onChange={(v) => setValue('checkUsername', v)} />
+                </label>
+                <label className="check-label">
+                  <span>{t.onlyComments}</span>
+                  <Toggle checked={Boolean(state.onlyComments)} onChange={(v) => setValue('onlyComments', v)} />
+                </label>
+                <label className="check-label">
+                  <span>{t.blockSpecialChars}</span>
+                  <Toggle checked={Boolean(state.blockSpecialChars)} onChange={(v) => setValue('blockSpecialChars', v)} />
+                </label>
+                <label className="check-label">
+                  <span>{t.blockEmoji}</span>
+                  <Toggle checked={Boolean(state.blockEmoji)} onChange={(v) => setValue('blockEmoji', v)} />
+                </label>
+                <label className="check-label">
+                  <span>{t.blockGrok}</span>
+                  <Toggle checked={Boolean(state.blockGrok)} onChange={(v) => setValue('blockGrok', v)} />
+                </label>
+              </div>
             </div>
-            <div className="form-grid inline">
-              <button className="plain-button" type="button" onClick={exportDiagnostics} title={t.diagnostics}>
-                <Download size={16} /> {t.diagnostics}
-              </button>
+
+            <div className="settings-section">
+              <h3>{t.secCloud}</h3>
+              <div className="settings-grid">
+                <label className="check-label">
+                  <span>{t.cloudEnabled}</span>
+                  <Toggle checked={Boolean(state.cloudEnabled)} onChange={(v) => setValue('cloudEnabled', v)} />
+                </label>
+                <label>
+                  <span>{t.cloudOwnerRepo}</span>
+                  <input
+                    value={String(state.cloudOwnerRepo ?? '')}
+                    placeholder="默认 smthdagg/XShield-keywords"
+                    onChange={(e) => setValue('cloudOwnerRepo', e.currentTarget.value)}
+                  />
+                </label>
+              </div>
+              <p className="hint">{t.cloudSourceHint}</p>
+            </div>
+
+            <div className="settings-section">
+              <h3>{t.secShare}</h3>
+              <p className="hint">{t.shareHint}</p>
+              <div className="form-grid inline">
+                <label>
+                  <span>{t.githubTokenLabel}</span>
+                  <input
+                    type="password"
+                    value={String(state.githubToken ?? '')}
+                    onChange={(e) => setValue('githubToken', e.currentTarget.value)}
+                  />
+                </label>
+                <button className="plain-button" type="button" disabled={syncing} onClick={shareHandles}>
+                  <Upload size={16} className={syncing ? 'spin' : ''} /> {t.shareHandles}
+                </button>
+                <button className="plain-button" type="button" onClick={exportDiagnostics} title={t.diagnostics}>
+                  <Download size={16} /> {t.diagnostics}
+                </button>
+              </div>
             </div>
           </DataPanel>
         )}

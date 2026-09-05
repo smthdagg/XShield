@@ -667,6 +667,10 @@ chrome.runtime.onMessage.addListener((message: Record<string, unknown>, _sender,
     });
     return true;
   }
+  if (message.action === 'shareKeywords') {
+    void shareKeywordsToProject().then(sendResponse);
+    return true;
+  }
   if (message.action === 'shareHandles') {
     void shareHandlesToProject().then(sendResponse);
     return true;
@@ -1051,6 +1055,68 @@ function base64ToUtf8(base64: string): string {
  * a GitHub token with push access to the target repo; ordinary users simply
  * never configure one and stay download-only.
  */
+/**
+ * Owner action: publish the panel's current library view (cloud downloaded +
+ * local custom words, exactly what the dashboard shows) to the project
+ * keywords.txt. REPLACE semantics — the owner curates the list, deletions
+ * are intentional. Requires a token with push access.
+ */
+async function shareKeywordsToProject(): Promise<{ success: boolean; total?: number; reason?: string }> {
+  try {
+    const stored = await chrome.storage.local.get(
+      getStorageDefaults('githubToken', 'cloudOwnerRepo', 'cloudKeywords', 'keywords', 'disabledCloudKeywords', 'cloudEnabled'),
+    );
+    const token = stored.githubToken as string;
+    if (!token) {
+      return { success: false, reason: '请先在设置中填写 GitHub Token' };
+    }
+    const ownerRepo = (stored.cloudOwnerRepo as string) || DEFAULT_CLOUD_OWNER_REPO;
+    const disabled = new Set((stored.disabledCloudKeywords as string[]) ?? []);
+    const cloudKws = (stored.cloudEnabled === false)
+      ? []
+      : parseKeywords((stored.cloudKeywords as string) ?? '').filter((k) => !disabled.has(k));
+    const customKws = parseKeywords((stored.keywords as string) ?? '');
+    const localList = Array.from(new Set([...cloudKws, ...customKws]));
+    if (localList.length === 0) {
+      return { success: false, reason: '本地词库为空（先同步或添加自定义词）' };
+    }
+
+    const api = `https://api.github.com/repos/${ownerRepo}/contents/keywords.txt`;
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github+json',
+      'content-type': 'application/json',
+    };
+    let sha: string | null = null;
+    const getRes = await fetch(`${api}?ref=main`, { headers, signal: AbortSignal.timeout(15000) });
+    if (getRes.ok) {
+      const meta = (await getRes.json()) as { sha?: string };
+      sha = meta.sha ?? null;
+    } else if (getRes.status !== 404) {
+      return { success: false, reason: `获取 keywords.txt 失败: HTTP ${getRes.status}` };
+    }
+
+    const putRes = await fetch(api, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({
+        message: `publish ${localList.length} keywords from XShield dashboard`,
+        content: utf8ToBase64(`${localList.join('\n')}\n`),
+        ...(sha ? { sha } : {}),
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!putRes.ok) {
+      const detail = await putRes.text().catch(() => '');
+      return { success: false, reason: `提交失败: HTTP ${putRes.status} ${detail.slice(0, 120)}` };
+    }
+    void addLog('info', 'sync', `词库已发布到项目仓库：${localList.length} 行（覆盖式）`);
+    return { success: true, total: localList.length };
+  } catch (error) {
+    return { success: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 async function shareHandlesToProject(): Promise<{ success: boolean; total?: number; reason?: string }> {
   try {
     const stored = await chrome.storage.local.get(

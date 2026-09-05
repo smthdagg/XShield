@@ -385,6 +385,22 @@ export default function Dashboard() {
     setValue('disabledCloudKeywords', Array.from(next));
   };
 
+  /** Owner action: publish the panel's library view to the project keywords.txt. */
+  const shareKeywords = (): void => {
+    setSyncing(true);
+    void send({ action: 'shareKeywords' })
+      .then((res) => {
+        const result = res as { success?: boolean; total?: number; reason?: string };
+        setStatus(
+          result?.success
+            ? `${t.shareKeywordsDone.replace('{count}', String(result.total ?? 0))}`
+            : result?.reason || t.shareKeywordsFail,
+        );
+      })
+      .catch(() => setStatus(t.shareKeywordsFail))
+      .finally(() => setSyncing(false));
+  };
+
   /** Owner/contributor action: push the local block ledger to the project. */
   const shareHandles = (): void => {
     setSyncing(true);
@@ -890,6 +906,9 @@ export default function Dashboard() {
               <div className="form-grid inline">
                 <button className="solid-button" type="button" disabled={syncing} onClick={triggerSync}>
                   <Download size={16} className={syncing ? 'spin' : ''} /> {syncing ? t.syncing : t.syncNow}
+                </button>
+                <button className="plain-button" type="button" disabled={syncing} title={t.shareKeywords} onClick={shareKeywords}>
+                  <Upload size={16} className={syncing ? 'spin' : ''} /> {t.shareKeywords}
                 </button>
                 <span className="toolbar-status">
                   {Number(state.lastSyncTime ?? 0) > 0 ? formatTime(Number(state.lastSyncTime)) : ''}

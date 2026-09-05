@@ -103,7 +103,23 @@ Spam accounts blocked by anyone can be shared with everyone:
 
 ---
 
-## 6. Library maintenance (project owner)
+## 6. Self-service library maintenance (no maintainer needed)
+
+All three flows live in the dashboard:
+
+1. **Download**: Rules & sync → 立即同步 (plus a 6-h automatic sync).
+2. **Local words**: Rules & sync → my library → add/edit/delete (affects you only).
+3. **Publish to the cloud (effective for everyone, token required)**:
+   - fill a GitHub Token in 总设置 (Contents write access on the library repo);
+   - Rules & sync → **同步我的词库到项目仓库** — the panel's current library
+     view (cloud words − disabled + local custom) is what gets published,
+     with REPLACE semantics (deletions are intentional);
+   - every user picks the new words up on their next sync.
+
+Note: panel sync prefers the GitHub API (fresh immediately); the CDN fallback
+may lag — purge at [purge.jsdelivr.net](https://www.jsdelivr.com/tools/purge).
+
+## 7. Library maintenance (project owner)
 
 - Content words: `keywords.txt` (561-line cleaned set: Chinese phrases + brand words + `t.cn`/`Gate Card` + 7 structural regexes)
 - Shared blocklist: `handles.txt` (accumulated via the share button)
@@ -111,7 +127,7 @@ Spam accounts blocked by anyone can be shared with everyone:
 
 ---
 
-## 7. FAQ
+## 8. FAQ
 
 | Symptom | Fix |
 |---------|-----|
@@ -127,6 +143,6 @@ Spam accounts blocked by anyone can be shared with everyone:
 
 ---
 
-## 8. Privacy
+## 9. Privacy
 
 All data (library, records, queue, ledger, whitelist, settings) lives in local `chrome.storage.local` (unlimitedStorage). Network requests are limited to: cloud library/blocklist fetches, GitHub sharing uploads (explicit click + token), and the X block endpoint (on triggers/manual actions). See [PRIVACY.md](PRIVACY.md).

@@ -445,6 +445,52 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
     expect(decoded).toContain('spammer2');
   });
 
+  it('shareKeywords publishes the panel library view with replace semantics', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchImpl: FetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url.includes('keywords.txt')) {
+        if (init?.method === 'PUT') {
+          return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ sha: 'old-sha', content: '' }), { status: 200 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as unknown as FetchImpl;
+    await bootstrap(
+      {
+        githubToken: 'tok',
+        cloudEnabled: true,
+        cloudKeywords: ['云端词一', '云端词二'].join('\n'),
+        disabledCloudKeywords: ['云端词二'],
+        keywords: ['自定义词三', '/正则四/i'].join('\n'),
+      },
+      fetchImpl,
+    );
+
+    const res = (await dispatch({ action: 'shareKeywords' })) as { success?: boolean; total?: number };
+    expect(res?.success).toBe(true);
+    expect(res?.total).toBe(3); // 云端词一 + 自定义词三 + /正则四/i（禁用词剔除）
+
+    const put = calls.find((c) => c.init?.method === 'PUT');
+    expect(put).toBeDefined();
+    const body = JSON.parse(String(put?.init?.body ?? '{}'));
+    expect(body.sha).toBe('old-sha');
+    const decoded = decodeURIComponent(escape(atob(body.content)));
+    expect(decoded).toContain('云端词一');
+    expect(decoded).toContain('自定义词三');
+    expect(decoded).toContain('/正则四/i');
+    expect(decoded).not.toContain('云端词二'); // disabled words are not published
+  });
+
+  it('shareKeywords without a token fails with a clear reason', async () => {
+    await bootstrap();
+    const res = (await dispatch({ action: 'shareKeywords' })) as { success?: boolean; reason?: string };
+    expect(res?.success).toBe(false);
+    expect(res?.reason).toContain('Token');
+  });
+
   it('shareHandles without a token fails with a clear reason', async () => {
     await bootstrap();
     const res = (await dispatch({ action: 'shareHandles' })) as { success?: boolean; reason?: string };

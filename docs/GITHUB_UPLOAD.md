@@ -17,12 +17,26 @@ Each sync (6-h alarm or manual 立即同步) fetches both files with a three-tie
 fallback: GitHub Contents API → jsDelivr CDN (`?t=` cache-buster) → bundled
 copy inside the extension. `handles.txt` missing = empty list, never an error.
 
-## Upload path (owner / contributors, optional)
+## Upload paths (owner / contributors, optional, token-gated)
 
-总设置 → GitHub Token (Contents: read/write on the library repo) →
-共享拉黑名单到项目仓库: the local block ledger is merged into `handles.txt`
-(GET sha → union → PUT base64). Deduplicated, never overwrites others'
-entries. Without a token nothing is ever uploaded.
+Two buttons, both require a GitHub Token with Contents: read/write on the
+library repo (总设置 → GitHub Token):
+
+1. **规则与同步 → 同步我的词库到项目仓库** — publishes the panel's current
+   library view (cloud words minus disabled + local custom) to `keywords.txt`
+   with REPLACE semantics: the dashboard view is exactly what all users will
+   sync. Deletions are intentional and preserved.
+2. **总设置 → 共享拉黑名单到项目仓库** — merges the local block ledger into
+   `handles.txt` (GET sha → union → PUT base64). Additive only; never
+   overwrites others' entries.
+
+Without a token nothing is ever uploaded.
+
+## CDN cache note
+
+The panel sync prefers the GitHub API (always fresh). The jsDelivr CDN
+fallback may serve a stale copy for a while after an upstream edit; force it
+with https://www.jsdelivr.com/tools/purge if needed.
 
 Keeping the project's handle directory clean: delete a 社区共享 record to
 permanently opt that handle out of the feeder on your machine, and consider

@@ -920,7 +920,7 @@ export default function Dashboard() {
                 <span>{t.cloudOwnerRepo}</span>
                 <input
                   value={String(state.cloudOwnerRepo ?? '')}
-                  placeholder="amahteru/x-comment-blocker"
+                  placeholder="默认 smthdagg/XShield-keywords"
                   onChange={(e) => setValue('cloudOwnerRepo', e.currentTarget.value)}
                 />
               </label>

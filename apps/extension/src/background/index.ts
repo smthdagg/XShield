@@ -24,6 +24,8 @@ import {
 } from '../store/blockerStorage';
 
 const ALARM_NAME = 'cloudKeywordSync';
+/** Pre-0.6.5 upstream keyword source (contains account-handle pollution). */
+const LEGACY_UPSTREAM_REPO = 'amahteru/x-comment-blocker';
 let isSyncing = false;
 
 class SyncLock {
@@ -196,7 +198,14 @@ async function doSync(): Promise<{ success: boolean; reason?: string }> {
 
   try {
     const items = await chrome.storage.local.get({ cloudOwnerRepo: '' });
-    const ownerRepo = (items.cloudOwnerRepo as string) || DEFAULT_CLOUD_OWNER_REPO;
+    let ownerRepo = (items.cloudOwnerRepo as string) || DEFAULT_CLOUD_OWNER_REPO;
+    // One-time migration: the pre-0.6.5 upstream repo's keyword file is
+    // polluted with account handles — force the cleaned default source.
+    if (ownerRepo === LEGACY_UPSTREAM_REPO) {
+      ownerRepo = DEFAULT_CLOUD_OWNER_REPO;
+      await chrome.storage.local.set({ cloudOwnerRepo: '' });
+      void addLog('info', 'sync', '检测到旧版上游词库源，已迁移到清洗后的默认仓库');
+    }
     const success = await syncCloudKeywords(ownerRepo);
     void addLog(success ? 'info' : 'error', 'sync', `词库同步${success ? '成功' : '失败'}（来源：${ownerRepo}）`);
     return { success };
@@ -313,6 +322,7 @@ class AutoBlockManager {
       getStorageDefaults(
         'autoBlockQueue',
         'autoBlockEta',
+        'autoBlockGraceMinutes',
         'autoBlockToday',
         'autoBlockLastDate',
         'autoBlockPausedUntil',
@@ -323,6 +333,7 @@ class AutoBlockManager {
 
     this.queue = (items.autoBlockQueue as string[]) ?? [];
     this.eta = (items.autoBlockEta as Record<string, number>) ?? {};
+    this.graceMinutes = (items.autoBlockGraceMinutes as number) ?? 30;
     this.countToday = (items.autoBlockToday as number) ?? 0;
     this.lastDate = (items.autoBlockLastDate as string) ?? '';
     this.pausedUntil = (items.autoBlockPausedUntil as number) ?? 0;
@@ -369,10 +380,39 @@ class AutoBlockManager {
     this.initPromise ??= (async () => {
       await this.refreshFromStorage();
       await this.checkDailyReset();
-
       this.initialized = true;
+      await this.backfillFromHistory();
     })();
     await this.initPromise;
+  }
+
+  /**
+   * 0.6.0 model: a surviving unblocked trigger record IS a pending block.
+   * On every worker wake, users with trigger records that are not in the
+   * ledger, the queue or the whitelist enter the pending queue (full grace
+   * window applies). Idempotent: ledger/queue/whitelist filters converge.
+   */
+  async backfillFromHistory(): Promise<void> {
+    try {
+      await ensureHistoryInitialized();
+      const users = Array.from(
+        new Set(
+          (inMemoryHistory ?? [])
+            .map((item) => extractCleanScreenName(item.user ?? ''))
+            .filter(Boolean),
+        ),
+      );
+      const { whitelist } = await chrome.storage.local.get(getStorageDefaults('whitelist'));
+      const whitelistSet = new Set((whitelist as string[]) ?? []);
+      const candidates = users.filter(
+        (name) => !this.queue.includes(name) && !this.blockedUsersSet.has(name) && !whitelistSet.has(name),
+      );
+      if (candidates.length === 0) return;
+      void addLog('info', 'block', `迁移：${candidates.length} 个历史触发用户进入待拉黑`);
+      await this.enqueueBatch(candidates);
+    } catch (e) {
+      console.warn('[X-Blocker] history backfill skipped:', e);
+    }
   }
 
   async saveState(updates: Record<string, unknown>): Promise<void> {

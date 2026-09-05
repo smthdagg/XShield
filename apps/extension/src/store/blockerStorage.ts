@@ -63,6 +63,7 @@ const STORAGE_DEFAULTS: Record<string, unknown> = {
   disabledCloudKeywords: [],
   autoBlockQueue: [],
   autoBlockEta: {},
+  autoBlockGraceMinutes: 30,
   autoBlockToday: 0,
   autoBlockLastDate: '',
   autoBlockPausedUntil: 0,

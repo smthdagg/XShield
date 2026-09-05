@@ -114,9 +114,11 @@ async function bootstrap(seed?: Record<string, unknown>, fetchImpl?: FetchImpl):
   vi.stubGlobal('fetch', fetchImpl ?? okFetch());
   Object.assign(storageData, { blockedUsersOnX: [], autoBlockQueue: [], blockedHistory: [] }, seed);
   const bg = await import('../background/index');
-  // Most tests exercise the drain immediately; opt into the grace window
-  // explicitly in the dedicated test.
-  bg.autoBlockManager.graceMinutes = 0;
+  // Most tests exercise the drain immediately. Seeds may opt into the grace
+  // window via autoBlockGraceMinutes — respect their choice.
+  if (seed?.autoBlockGraceMinutes === undefined) {
+    bg.autoBlockManager.graceMinutes = 0;
+  }
 }
 
 function record(id: string, user: string, isAutoBlock: boolean): Record<string, unknown> {
@@ -392,6 +394,28 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
       { timeout: 5000, interval: 25 },
     );
     expect(storageData.autoBlockQueue).toEqual([]);
+  });
+
+  it('startup backfill: surviving unblocked trigger records enter the pending queue', async () => {
+    await bootstrap({
+      blockedHistory: [
+        record('tweet-b1', 'back1', true),
+        record('tweet-b2', 'back2', true),
+        record('tweet-b3', 'back3', true),
+      ],
+      blockedUsersOnX: ['back2'],
+      whitelist: ['back3'],
+      autoBlockGraceMinutes: 30,
+    });
+
+    await vi.waitFor(
+      () => expect(storageData.autoBlockQueue).toContain('back1'),
+      { timeout: 5000, interval: 25 },
+    );
+    // Ledger member: stays blocked, never re-queued. Whitelisted: stays free.
+    expect(storageData.autoBlockQueue).not.toContain('back2');
+    expect(storageData.autoBlockQueue).not.toContain('back3');
+    expect(storageData.blockedUsersOnX).toEqual(['back2']);
   });
 
   it('whitelist chokepoint: blockUserOnX refuses whitelisted users', async () => {

@@ -1116,6 +1116,19 @@ export default function Dashboard() {
             </div>
 
             <div className="settings-section">
+              <h3>{t.supportTitle}</h3>
+              <p className="hint">{t.supportHint}</p>
+              <div className="form-grid inline">
+                <button className="plain-button" type="button" onClick={() => window.open('https://github.com/sponsors/smthdagg', '_blank')}>
+                  ♥ GitHub Sponsors
+                </button>
+                <button className="plain-button" type="button" onClick={() => window.open('https://afdian.net/a/smthdagg', '_blank')}>
+                  ♥ 爱发电
+                </button>
+              </div>
+            </div>
+
+            <div className="settings-section">
               <h3>{t.secShare}</h3>
               <p className="hint">{t.shareHint}</p>
               <div className="form-grid inline">

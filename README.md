@@ -51,6 +51,10 @@
 
 所有数据只存在你的浏览器本地。联网仅三类：下载云端词库/黑名单、X 拉黑接口、以及你主动点击的 GitHub 共享上传（可选功能，不填 Token 不上传）。
 
+### 支持项目
+
+扩展免费开源。上架与维护有成本，欢迎支持：[GitHub Sponsors](https://github.com/sponsors/smthdagg) · [爱发电](https://afdian.net/a/smthdagg)
+
 ### 许可
 
 MIT License，详见 [LICENSE](LICENSE)。

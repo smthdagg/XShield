@@ -105,6 +105,7 @@ const storageQueue = new AsyncQueue();
 let inMemoryHistory: SpamItem[] | null = null;
 let inMemoryBlockedCount: number | null = null;
 let pendingSpamBatch: SpamItem[] = [];
+const communitySourceIds = new Set<string>();
 let spamBatchTimer: ReturnType<typeof setTimeout> | null = null;
 const currentSessionToken = crypto.randomUUID();
 
@@ -208,6 +209,9 @@ async function doSync(): Promise<{ success: boolean; reason?: string }> {
     }
     const success = await syncCloudKeywords(ownerRepo);
     void addLog(success ? 'info' : 'error', 'sync', `词库同步${success ? '成功' : '失败'}（来源：${ownerRepo}）`);
+    if (success) {
+      void feedCommunityHandles();
+    }
     return { success };
   } finally {
     _lock.dispose();
@@ -272,6 +276,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM_NAME) {
     void doSync();
   } else if (alarm.name === 'autoBlockWatchdog') {
+    void feedCommunityHandles();
     void autoBlockManager.process();
   }
 });
@@ -631,7 +636,7 @@ class AutoBlockManager {
 
 const autoBlockManager = new AutoBlockManager();
 // Exported for tests (grace-window tuning); not part of the public surface.
-export { autoBlockManager };
+export { autoBlockManager, feedCommunityHandles };
 void autoBlockManager.init().then(() => {
   void autoBlockManager.process();
 });
@@ -733,10 +738,10 @@ async function markBlockedOnX(cleanName: string): Promise<void> {
   const stored = (
     await chrome.storage.local.get(getStorageDefaults('blockedUsersOnX', 'blockedAt'))
   );
-  const ledger = Array.from(new Set([...((stored.blockedUsersOnX as string[]) ?? []), cleanName])).slice(-10000);
+  const ledger = Array.from(new Set([...((stored.blockedUsersOnX as string[]) ?? []), cleanName])).slice(-100000);
   const blockedAt = { ...((stored.blockedAt as Record<string, number>) ?? {}), [cleanName]: Date.now() };
-  // Keep the timestamp map aligned with the 10000-name ledger cap.
-  const entries = Object.entries(blockedAt).sort((a, b) => b[1] - a[1]).slice(0, 10000);
+  // Keep the timestamp map aligned with the ledger cap.
+  const entries = Object.entries(blockedAt).sort((a, b) => b[1] - a[1]).slice(0, 100000);
   await chrome.storage.local.set({
     blockedUsersOnX: ledger,
     blockedAt: Object.fromEntries(entries),
@@ -810,17 +815,41 @@ function handleRemoveSpamRecord(id: string, time?: number): Promise<{ success: b
       }
       inMemoryBlockedCount = Math.max(0, (inMemoryBlockedCount ?? 0) - removedCount);
       await saveHistoryState();
+    }
 
-      const remainingUsers = new Set(
-        [
-          ...(inMemoryHistory ?? []),
-          // Records still waiting in the write batch count as remaining too —
-          // the flush will merge them into history shortly.
-          ...pendingSpamBatch,
-        ]
-          .map((item) => extractCleanScreenName(item.user ?? ''))
-          .filter(Boolean),
-      );
+    const remainingUsers = new Set(
+      [
+        ...(inMemoryHistory ?? []),
+        // Records still waiting in the write batch count as remaining too —
+        // the flush will merge them into history shortly.
+        ...pendingSpamBatch,
+      ]
+        .map((item) => extractCleanScreenName(item.user ?? ''))
+        .filter(Boolean),
+    );
+
+    if (removedUsers.length > 0) {
+      // Deleting a community-sourced record is a permanent opt-out: without
+      // this the feeder would re-add the handle on the next wake. Runs for
+      // batch-window deletes too (where removedCount is 0).
+      void (async () => {
+        const removedCommunity = removedUsers.filter((name) =>
+          communitySourceIds.has(`${COMMUNITY_HISTORY_PREFIX}${name}`),
+        );
+        if (removedCommunity.length === 0) return;
+        const items = await chrome.storage.local.get(getStorageDefaults('communityDismissed'));
+        const dismissed = new Set((items.communityDismissed as string[]) ?? []);
+        let changed = false;
+        for (const name of removedCommunity) {
+          if (!dismissed.has(name)) {
+            dismissed.add(name);
+            changed = true;
+          }
+        }
+        if (changed) {
+          await chrome.storage.local.set({ communityDismissed: Array.from(dismissed).slice(-100000) });
+        }
+      })();
       for (const name of removedUsers) {
         if (!remainingUsers.has(name)) {
           void autoBlockManager.removeFromQueue(name);
@@ -866,10 +895,10 @@ async function flushSpamBatch(): Promise<void> {
   await storageQueue.enqueue(async () => {
     await ensureHistoryInitialized();
     (inMemoryHistory ?? []).unshift(...batch.reverse());
-    if ((inMemoryHistory ?? []).length > 5000) {
+    if ((inMemoryHistory ?? []).length > 20000) {
       const history = inMemoryHistory ?? [];
-      const evicted = history.slice(5000);
-      history.length = 5000;
+      const evicted = history.slice(20000);
+      history.length = 20000;
       for (const item of evicted) {
         if (item?.id) {
           globalSpamCache.delete(item.id);
@@ -879,6 +908,77 @@ async function flushSpamBatch(): Promise<void> {
     inMemoryBlockedCount = (inMemoryBlockedCount ?? 0) + batch.length;
     await saveHistoryState();
   });
+}
+
+const COMMUNITY_FEED_BATCH = 50;
+const COMMUNITY_QUEUE_TARGET = 100;
+const COMMUNITY_HISTORY_PREFIX = 'community:';
+
+/**
+ * Actively feed the shared backlog: pull community handles (not blocked,
+ * queued, whitelisted or dismissed) into the pending queue in small batches,
+ * keeping at most COMMUNITY_QUEUE_TARGET community entries in flight. Each
+ * fed handle gets a synthetic trigger record (reason 社区共享) so the usual
+ * visibility and intervention apply; blocking follows the normal pacing.
+ * The cloud handles.txt is the permanent master — local state is a cache.
+ */
+async function feedCommunityHandles(): Promise<void> {
+  console.log('DBG feeder start');
+  try {
+    const stored = await chrome.storage.local.get(
+      getStorageDefaults('communityHandles', 'communityDismissed', 'blockedUsersOnX', 'whitelist'),
+    );
+    const community = new Set((stored.communityHandles as string[]) ?? []);
+    if (community.size === 0) return;
+    const dismissed = new Set((stored.communityDismissed as string[]) ?? []);
+    const ledger = new Set((stored.blockedUsersOnX as string[]) ?? []);
+    const whitelist = new Set((stored.whitelist as string[]) ?? []);
+
+    const { autoBlockQueue: queue } = await chrome.storage.local.get(
+      getStorageDefaults('autoBlockQueue'),
+    );
+    const queueList = (queue as string[]) ?? [];
+    let inFlight = 0;
+    for (const name of queueList) {
+      if (community.has(name)) inFlight++;
+    }
+
+    const feed: string[] = [];
+    for (const name of community) {
+      if (feed.length >= COMMUNITY_FEED_BATCH) break;
+      if (inFlight + feed.length >= COMMUNITY_QUEUE_TARGET) break;
+      if (ledger.has(name) || whitelist.has(name) || dismissed.has(name) || queueList.includes(name)) continue;
+      feed.push(name);
+    }
+    if (feed.length === 0) return;
+
+    const now = Date.now();
+    for (const name of feed) {
+      const recordId = `${COMMUNITY_HISTORY_PREFIX}${name}`;
+      communitySourceIds.add(recordId);
+      pendingSpamBatch.push({
+        id: recordId,
+        text: '',
+        user: name,
+        displayName: '',
+        reason: '社区共享',
+        time: now,
+        isAutoBlock: true,
+      });
+    }
+    if (!spamBatchTimer) {
+      spamBatchTimer = setTimeout(() => {
+        spamBatchTimer = null;
+        void flushSpamBatch();
+      }, 50);
+    }
+    console.log('DBG feeder calling enqueueBatch');
+    await autoBlockManager.enqueueBatch(feed);
+    console.log('DBG feeder enqueueBatch returned');
+    void addLog('info', 'block', `社区名单喂送 ${feed.length} 个进入待拉黑`);
+  } catch (e) {
+    console.warn('[X-Blocker] community feed skipped:', e);
+  }
 }
 
 async function handleRecordSpam(items: SpamItem[]): Promise<void> {
@@ -898,6 +998,10 @@ async function handleRecordSpam(items: SpamItem[]): Promise<void> {
       time: item.time || Date.now(),
       isAutoBlock: item.isAutoBlock === true,
     });
+  }
+
+  for (const spam of newSpams) {
+    if (String(spam.id ?? '').startsWith(COMMUNITY_HISTORY_PREFIX)) communitySourceIds.add(String(spam.id));
   }
 
   if (newSpams.length === 0) return;

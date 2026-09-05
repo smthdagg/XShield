@@ -66,6 +66,7 @@ const STORAGE_DEFAULTS: Record<string, unknown> = {
   autoBlockEta: {},
   autoBlockGraceMinutes: 30,
   communityHandles: [],
+  communityDismissed: [],
   githubToken: '',
   autoBlockDailyLimit: 300,
   autoBlockBatchLimit: 30,

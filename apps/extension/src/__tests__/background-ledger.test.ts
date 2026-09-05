@@ -452,6 +452,61 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
     expect(res?.reason).toContain('Token');
   });
 
+  it('community feeder: shared handles enter pending, whitelist/dismiss are honored', async () => {
+    await bootstrap({
+      communityHandles: ['cshare1', 'cshare2', 'cshare3'],
+      whitelist: ['cshare2'],
+      communityDismissed: ['cshare3'],
+      autoBlockGraceMinutes: 30,
+    });
+    const bg = await import('../background/index');
+
+    await bg.feedCommunityHandles();
+    try {
+      await vi.waitFor(
+        () => expect(storageData.autoBlockQueue).toContain('cshare1'),
+        { timeout: 4500, interval: 25 },
+      );
+    } catch (error) {
+      console.log('DBG state: q=', JSON.stringify(storageData.autoBlockQueue), 'eta=', JSON.stringify(storageData.autoBlockEta), 'hist=', JSON.stringify((storageData.blockedHistory as Array<{id:string}> ?? []).map((x) => x.id)), 'ledger=', JSON.stringify(storageData.blockedUsersOnX), 'dismissed=', JSON.stringify(storageData.communityDismissed));
+      throw error;
+    }
+    expect(storageData.autoBlockQueue).not.toContain('cshare2');
+    expect(storageData.autoBlockQueue).not.toContain('cshare3');
+    // Synthetic record for visibility + intervention.
+    await vi.waitFor(
+      () =>
+        (storageData.blockedHistory as Array<{ id: string; reason: string }>).some(
+          (it) => it.id === 'community:cshare1' && it.reason === '社区共享',
+        ),
+      { timeout: 5000, interval: 25 },
+    );
+    expect(storageData.blockedUsersOnX).toEqual([]);
+
+  }, 12000);
+
+  it('deleting a community record opts the handle out of future feeding', async () => {
+    await bootstrap({
+      communityHandles: ['copt1'],
+      communityDismissed: [],
+      autoBlockGraceMinutes: 30,
+    });
+    const bg = await import('../background/index');
+    await bg.feedCommunityHandles();
+    await vi.waitFor(
+      () => expect(storageData.autoBlockQueue).toContain('copt1'),
+      { timeout: 5000, interval: 25 },
+    );
+    await dispatch({ action: 'removeSpamRecord', id: 'community:copt1' });
+    await vi.waitFor(
+      () => expect((storageData.communityDismissed as string[])).toContain('copt1'),
+      { timeout: 5000, interval: 25 },
+    );
+    await bg.feedCommunityHandles();
+    await new Promise((r) => setTimeout(r, 200));
+    expect(storageData.autoBlockQueue).toEqual([]);
+  });
+
   it('whitelist chokepoint: blockUserOnX refuses whitelisted users', async () => {
     await bootstrap({ whitelist: ['pacifist1'] });
     const res = (await dispatch({ action: 'blockUserOnX', screenName: 'pacifist1' })) as {

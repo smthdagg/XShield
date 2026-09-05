@@ -1,8 +1,9 @@
 # XShield Architecture (1.0.0)
 
-> The pre-1.5.1 self-built architecture (workspace packages, IndexedDB, candidate
-> pool, scoring) was removed when the project aligned with X(Twitter) Comment
-> Blocker 1.5.1. What remains is a single extension app with a small, testable core.
+> An earlier self-built architecture (workspace packages, IndexedDB, candidate
+> pool, scoring) was removed. What remains is a single extension app with a
+> small, testable core. Origin note: the trigger & block kernel derives from
+> amahteru/x-comment-blocker (MIT).
 
 ## Layout
 
@@ -62,6 +63,6 @@ recovers by syncing.
 ## Invariants
 
 - The ledger and history are written only by the background (single writer).
-- A block success never deletes trigger records (1.5.1 anti-drift).
+- A block success never deletes trigger records (anti-drift).
 - A blocked/whitelisted user can never be re-enqueued or re-blocked.
 - Every block path funnels through handleBlockUser → markBlockedOnX.

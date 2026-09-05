@@ -1,6 +1,6 @@
 # XShield User Guide (v1.0 stable)
 
-X(Twitter) comment spam blocking + trigger-list auto-blocking + community shared blocklist. The trigger & block kernel is aligned with X(Twitter) Comment Blocker 1.5.1.
+X(Twitter) comment spam blocking + trigger-list auto-blocking + community shared blocklist.
 
 > This guide matches extension **1.0.0+**. Older guides (≤0.8) are archived in Git history.
 
@@ -88,7 +88,7 @@ Notes:
 - Blocks use your current Chrome X session — identical to blocking manually on the web
 - The queue is deduplicated **by user**: however many times a user triggers, they are processed once
 - Records are kept **per tweet**: multiple spam tweets from one user produce multiple records (evidence), without re-queueing
-- X publishes no official block-rate limits; the defaults are conservative heuristics from the 1.5.1 project. Aged accounts can relax them (e.g. 3 s interval, 500/day); new accounts should keep the defaults
+- X publishes no official block-rate limits; the defaults are conservative heuristics. Aged accounts can relax them (e.g. 3 s interval, 500/day); new accounts should keep the defaults
 
 ---
 

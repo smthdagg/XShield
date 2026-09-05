@@ -303,21 +303,6 @@ export default function Dashboard() {
     void send({ action: 'removeSpamRecord', id, time });
   };
 
-  /** Cancel a pending auto-block: whitelisted users are purged from the queue. */
-  const whitelistQueuedUser = (name: string): void => {
-    setValue('whitelist', Array.from(new Set([...whitelist, name])));
-    setStatus(`@${name} → ${t.whitelist}`);
-  };
-
-  /** Cancel a pending auto-block by deleting every trigger record of the user. */
-  const removeQueuedUser = (name: string): void => {
-    const records = blockedHistory.filter((item) => extractCleanScreenName(item.user ?? '') === name);
-    for (const item of records) {
-      void send({ action: 'removeSpamRecord', id: item.id, time: item.time });
-    }
-    setStatus(records.length > 0 ? `已移出待拉黑：@${name}（${records.length} 条记录）` : `已移出待拉黑：@${name}`);
-  };
-
   const addWhitelistFromRecord = (handle: string): void => {
     const clean = extractCleanScreenName(handle);
     if (!clean) return;
@@ -727,37 +712,6 @@ export default function Dashboard() {
               </div>
             </DataPanel>
 
-            <DataPanel title={t.queueTitle} meta={`${pendingQueue.length}`}>
-              <div className="card-grid">
-                {pendingQueue.map((name) => {
-                  const info = ((state.queueInfo as Record<string, { displayName?: string; text?: string }>) ?? {})[name];
-                  return (
-                    <div className="profile-card" key={name}>
-                      <div
-                        className="profile-card-head"
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => window.open(`https://x.com/${name}`, '_blank')}
-                      >
-                        <span className="history-display">{info?.displayName || name}</span>
-                        <span className="history-handle">@{name}</span>
-                        <ExternalLink size={13} className="profile-card-open" />
-                      </div>
-                      {info?.text ? <p className="profile-card-text">{info.text}</p> : null}
-                      <span className="row-actions profile-card-actions">
-                        <button type="button" className="btn-whitelist" onClick={() => whitelistQueuedUser(name)}>
-                          {t.whitelist}
-                        </button>
-                        <button type="button" title={t.remove} onClick={() => removeQueuedUser(name)}>
-                          <Trash2 size={14} />
-                        </button>
-                      </span>
-                    </div>
-                  );
-                })}
-                {pendingQueue.length === 0 && <p className="empty-state">{t.queueEmpty}</p>}
-              </div>
-            </DataPanel>
           </div>
         )}
 

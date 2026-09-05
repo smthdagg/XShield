@@ -599,6 +599,53 @@ export default function Dashboard() {
               </button>
             </div>
             <p className="hint">{t.blockHere}</p>
+            <div className="form-grid inline">
+              <label>
+                <span>{t.dailyLimitLabel}</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={1000}
+                  value={String(state.autoBlockDailyLimit ?? 300)}
+                  onChange={(e) => setValue('autoBlockDailyLimit', Math.max(1, Number(e.currentTarget.value) || 300))}
+                />
+              </label>
+              <label>
+                <span>{t.batchLimitLabel}</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={200}
+                  value={String(state.autoBlockBatchLimit ?? 30)}
+                  onChange={(e) => setValue('autoBlockBatchLimit', Math.max(1, Number(e.currentTarget.value) || 30))}
+                />
+              </label>
+              <label>
+                <span>{t.delaySecondsLabel}</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={600}
+                  value={String(state.autoBlockDelaySeconds ?? 5)}
+                  onChange={(e) => setValue('autoBlockDelaySeconds', Math.max(0, Number(e.currentTarget.value) || 0))}
+                />
+              </label>
+            </div>
+            <p className="hint">{t.autoBlockNote}</p>
+            <p className="hint">{t.shareHint}</p>
+            <div className="form-grid inline">
+              <label>
+                <span>{t.githubTokenLabel}</span>
+                <input
+                  type="password"
+                  value={String(state.githubToken ?? '')}
+                  onChange={(e) => setValue('githubToken', e.currentTarget.value)}
+                />
+              </label>
+              <button className="plain-button" type="button" disabled={syncing} onClick={shareHandles}>
+                <Upload size={16} className={syncing ? 'spin' : ''} /> {t.shareHandles}
+              </button>
+            </div>
             <div className="card-grid">
               {filteredHistory.map((item) => {
                 const handle = extractCleanScreenName(item.user ?? '');
@@ -691,55 +738,7 @@ export default function Dashboard() {
                   <strong>{blockedUsersOnX.length}</strong>
                 </article>
               </div>
-              <p className="hint">{t.cloudSourceHint}</p>
-            <div className="form-grid inline">
-              <label>
-                <span>{t.dailyLimitLabel}</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={1000}
-                  value={String(state.autoBlockDailyLimit ?? 300)}
-                  onChange={(e) => setValue('autoBlockDailyLimit', Math.max(1, Number(e.currentTarget.value) || 300))}
-                />
-              </label>
-              <label>
-                <span>{t.batchLimitLabel}</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={200}
-                  value={String(state.autoBlockBatchLimit ?? 30)}
-                  onChange={(e) => setValue('autoBlockBatchLimit', Math.max(1, Number(e.currentTarget.value) || 30))}
-                />
-              </label>
-              <label>
-                <span>{t.delaySecondsLabel}</span>
-                <input
-                  type="number"
-                  min={0}
-                  max={600}
-                  value={String(state.autoBlockDelaySeconds ?? 5)}
-                  onChange={(e) => setValue('autoBlockDelaySeconds', Math.max(0, Number(e.currentTarget.value) || 0))}
-                />
-              </label>
-            </div>
-            <p className="hint">{t.autoBlockNote}</p>
-            <p className="hint">{t.shareHint}</p>
-            <div className="form-grid inline">
-              <label>
-                <span>{t.githubTokenLabel}</span>
-                <input
-                  type="password"
-                  value={String(state.githubToken ?? '')}
-                  onChange={(e) => setValue('githubToken', e.currentTarget.value)}
-                />
-              </label>
-              <button className="plain-button" type="button" disabled={syncing} onClick={shareHandles}>
-                <Upload size={16} className={syncing ? 'spin' : ''} /> {t.shareHandles}
-              </button>
-            </div>
-            <div className="form-grid inline">
+              <div className="form-grid inline">
               <button className="plain-button" type="button" onClick={exportDiagnostics} title={t.diagnostics}>
                 <Download size={16} /> {t.diagnostics}
               </button>

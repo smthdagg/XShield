@@ -303,6 +303,21 @@ export default function Dashboard() {
     void send({ action: 'removeSpamRecord', id, time });
   };
 
+  /** Cancel a pending auto-block: whitelisted users are purged from the queue. */
+  const whitelistQueuedUser = (name: string): void => {
+    setValue('whitelist', Array.from(new Set([...whitelist, name])));
+    setStatus(`@${name} → ${t.whitelist}`);
+  };
+
+  /** Cancel a pending auto-block by deleting every trigger record of the user. */
+  const removeQueuedUser = (name: string): void => {
+    const records = blockedHistory.filter((item) => extractCleanScreenName(item.user ?? '') === name);
+    for (const item of records) {
+      void send({ action: 'removeSpamRecord', id: item.id, time: item.time });
+    }
+    setStatus(records.length > 0 ? `已移出待拉黑：@${name}（${records.length} 条记录）` : `已移出待拉黑：@${name}`);
+  };
+
   const addWhitelistFromRecord = (handle: string): void => {
     const clean = extractCleanScreenName(handle);
     if (!clean) return;
@@ -459,25 +474,20 @@ export default function Dashboard() {
   // `__blocked_on_x__` / `__queued_on_x__` are 1.5.1 pseudo-reasons driven by
   // the ledger and the auto-block queue instead of the record's own reason.
   const BLOCKED_FILTER = '__blocked_on_x__';
-  const QUEUED_FILTER = '__queued_on_x__';
-  const triggerReasons = ['all', '内容屏蔽', '昵称屏蔽', '表情屏蔽', '特殊字符屏蔽', 'Grok屏蔽', QUEUED_FILTER, BLOCKED_FILTER];
-  // Default ('all') is the working list: records whose user is neither
-  // queued nor blocked. Confirming a block (or an auto trigger enqueuing)
-  // moves rows out immediately — into 排队中 — and into 已拉黑 once the
-  // ledger confirms the block. Records stay in storage (1.5.1: blocks never
-  // delete history); only the working view shrinks.
+  const triggerReasons = ['all', '内容屏蔽', '昵称屏蔽', '表情屏蔽', '特殊字符屏蔽', 'Grok屏蔽', BLOCKED_FILTER];
+  // 触发记录 = every record whose user is not blocked yet (queued ones stay
+  // here, marked 排队中, with their action buttons); a successful block moves
+  // the row into the 已拉黑 filter. Records stay in storage (1.5.1: blocks
+  // never delete history).
   const filterLabel = (reason: string): string =>
-    reason === BLOCKED_FILTER ? '已拉黑' : reason === QUEUED_FILTER ? '排队中' : reason === 'all' ? '未拉黑' : reason;
+    reason === BLOCKED_FILTER ? '已拉黑' : reason === 'all' ? '未拉黑' : reason;
 
   const filteredHistory = blockedHistory.filter((item) => {
     const handle = extractCleanScreenName(item.user ?? '');
     const isBlocked = Boolean(handle) && blockedUsersOnX.includes(handle);
-    const isQueued = !isBlocked && Boolean(handle) && autoBlockQueue.includes(handle);
     if (triggerFilter === BLOCKED_FILTER) {
       if (!isBlocked) return false;
-    } else if (triggerFilter === QUEUED_FILTER) {
-      if (!isQueued) return false;
-    } else if (isBlocked || isQueued) {
+    } else if (isBlocked) {
       return false;
     } else if (triggerFilter !== 'all') {
       if (item.reason !== triggerFilter) return false;
@@ -488,11 +498,11 @@ export default function Dashboard() {
     return true;
   });
   const selectedRecords = filteredHistory.filter((item) => selectedIds.includes(`${item.id}:${item.time}`));
-  // Records currently living under the 排队中/已拉黑 filters instead of the
-  // working list.
-  const hasDeferredRecords = blockedHistory.some((item) => {
+  // True when the working list is empty because every record's user is
+  // already blocked (they live under the 已拉黑 filter now).
+  const allRecordsBlocked = blockedHistory.length > 0 && blockedHistory.every((item) => {
     const handle = extractCleanScreenName(item.user ?? '');
-    return Boolean(handle) && (blockedUsersOnX.includes(handle) || autoBlockQueue.includes(handle));
+    return Boolean(handle) && blockedUsersOnX.includes(handle);
   });
   const selectedNames = Array.from(
     new Set(selectedRecords.map((item) => extractCleanScreenName(item.user ?? '')).filter(Boolean)),
@@ -587,6 +597,7 @@ export default function Dashboard() {
                 const handle = extractCleanScreenName(item.user ?? '');
                 const key = `${item.id}:${item.time}`;
                 const isBlocked = handle ? blockedUsersOnX.includes(handle) : false;
+                const isQueued = !isBlocked && Boolean(handle) && autoBlockQueue.includes(handle);
                 return (
                   <div className="profile-card trigger-card" key={key}>
                     <label className="check-inline card-check">
@@ -608,6 +619,7 @@ export default function Dashboard() {
                     >
                       <span className="history-display">{item.displayName || item.user || 'unknown'}</span>
                       {handle && <span className="history-handle">@{handle}</span>}
+                      {isQueued && <span className="queue-badge">{t.queuedBadge}</span>}
                       <span className="history-reason">{item.reason ? `[${item.reason}]` : ''}</span>
                       <small>{formatTime(item.time)}</small>
                       <ExternalLink size={13} className="profile-card-open" />
@@ -641,8 +653,8 @@ export default function Dashboard() {
                 );
               })}
               {filteredHistory.length === 0 &&
-                (triggerFilter !== BLOCKED_FILTER && triggerFilter !== QUEUED_FILTER && hasDeferredRecords ? (
-                  <p className="empty-state">记录都已进入拉黑流程：「排队中」「已拉黑」筛选里可见。</p>
+                (allRecordsBlocked && triggerFilter !== BLOCKED_FILTER ? (
+                  <p className="empty-state">全部已拉黑：记录在「已拉黑」筛选里可见。</p>
                 ) : (
                   <p className="empty-state">{t.historyEmpty}</p>
                 ))}
@@ -720,13 +732,26 @@ export default function Dashboard() {
                 {pendingQueue.map((name) => {
                   const info = ((state.queueInfo as Record<string, { displayName?: string; text?: string }>) ?? {})[name];
                   return (
-                    <div className="profile-card" key={name} role="button" tabIndex={0} onClick={() => window.open(`https://x.com/${name}`, '_blank')}>
-                      <div className="profile-card-head">
+                    <div className="profile-card" key={name}>
+                      <div
+                        className="profile-card-head"
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => window.open(`https://x.com/${name}`, '_blank')}
+                      >
                         <span className="history-display">{info?.displayName || name}</span>
                         <span className="history-handle">@{name}</span>
                         <ExternalLink size={13} className="profile-card-open" />
                       </div>
                       {info?.text ? <p className="profile-card-text">{info.text}</p> : null}
+                      <span className="row-actions profile-card-actions">
+                        <button type="button" className="btn-whitelist" onClick={() => whitelistQueuedUser(name)}>
+                          {t.whitelist}
+                        </button>
+                        <button type="button" title={t.remove} onClick={() => removeQueuedUser(name)}>
+                          <Trash2 size={14} />
+                        </button>
+                      </span>
                     </div>
                   );
                 })}

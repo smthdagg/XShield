@@ -220,7 +220,7 @@ describe('dashboard triggered page blocking', () => {
     expect(historyWrites).toHaveLength(0);
   });
 
-  it('working list stays clean: queued rows leave by default, blocked rows show under 已拉黑', async () => {
+  it('triggered list: queued rows stay visible with actions, blocked rows move to 已拉黑', async () => {
     // Reset what the previous test wrote, then seed one queued user and one
     // blocked user.
     storageData.blockedUsersOnX = ['someone'];
@@ -234,10 +234,14 @@ describe('dashboard triggered page blocking', () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     });
 
-    // Default (未拉黑) working list: both records deferred → no cards, and
-    // the empty state points at the 排队中/已拉黑 filters.
-    expect(container.querySelectorAll('.profile-card.trigger-card').length).toBe(0);
-    expect(container.textContent).toContain('都已进入拉黑流程');
+    // Default (未拉黑) working list: the queued record stays visible with its
+    // action buttons and a 排队中 badge; the blocked one is gone from here.
+    const cards = container.querySelectorAll('.profile-card.trigger-card');
+    expect(cards.length).toBe(1);
+    expect(container.textContent).toContain('垃圾号');
+    expect(container.textContent).toContain('排队中');
+    expect(container.textContent).toContain('白名单');
+    expect(container.textContent).not.toContain('某人');
 
     const select = container.querySelector('select') as HTMLSelectElement;
     const setNativeValue = (el: HTMLSelectElement, value: string) => {
@@ -251,12 +255,5 @@ describe('dashboard triggered page blocking', () => {
     });
     expect(container.querySelectorAll('.profile-card.trigger-card').length).toBe(1);
     expect(container.textContent).toContain('某人');
-
-    // 排队中 filter: only the queued user's record.
-    await act(async () => {
-      setNativeValue(select, '__queued_on_x__');
-    });
-    expect(container.querySelectorAll('.profile-card.trigger-card').length).toBe(1);
-    expect(container.textContent).toContain('垃圾号');
   });
 });

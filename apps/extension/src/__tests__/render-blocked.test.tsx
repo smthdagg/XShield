@@ -42,12 +42,16 @@ describe('blockedLog page renders', () => {
     await act(async () => { navBtn!.click(); });
     await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
 
-    const texts = Array.from(container.querySelectorAll('button')).map((b) => b.textContent ?? '');
-    // every button must have non-empty text and no replacement chars
-    for (const text of texts) {
+    const buttons = Array.from(container.querySelectorAll('button'));
+    // every text button must have non-empty text and no replacement chars;
+    // icon-only buttons are fine when they carry a title (accessible name)
+    for (const button of buttons) {
+      if (button.getAttribute('title')) continue;
+      const text = (button.textContent ?? '').trim();
       expect(text.length).toBeGreaterThan(0);
       expect(text).not.toMatch(/[\uFFFD]/);
     }
-    expect(texts.some((x) => x.includes('解除拉黑'))).toBe(true);
+    expect(buttons.some((b) => (b.textContent ?? '').includes('解除拉黑'))).toBe(true);
+    expect(buttons.some((b) => (b.textContent ?? '').includes('白名单'))).toBe(true);
   });
 });

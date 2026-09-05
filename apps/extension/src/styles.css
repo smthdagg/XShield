@@ -1118,3 +1118,12 @@ input[type="checkbox"] {
   outline: none;
   padding: 0;
 }
+
+.queue-badge {
+  font-size: 11px;
+  color: #2f6f8f;
+  background: #e3f0f7;
+  border-radius: 6px;
+  padding: 1px 6px;
+  white-space: nowrap;
+}

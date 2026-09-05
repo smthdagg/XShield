@@ -62,6 +62,7 @@ const DEFAULTS: Record<string, unknown> = {
   cloudEnabled: true,
   cloudOwnerRepo: '',
   autoBlockQueue: [] as string[],
+  autoBlockEta: {} as Record<string, number>,
   queueInfo: {} as Record<string, { displayName?: string; text?: string }>,
   autoBlockToday: 0,
   autoBlockPausedUntil: 0,
@@ -349,6 +350,52 @@ export default function Dashboard() {
     setValue('disabledCloudKeywords', Array.from(next));
   };
 
+  /** One-click environment snapshot: real storage state + recent logs. */
+  const exportDiagnostics = (): void => {
+    const diag = {
+      exportedAt: new Date().toISOString(),
+      version: chrome.runtime.getManifest().version,
+      counts: {
+        cloudKeywords: cloudKeywords.length,
+        customKeywords: customKeywords.length,
+        whitelist: whitelist.length,
+        blockedHistory: blockedHistory.length,
+        blockedUsers: blockedUsersOnX.length,
+        pendingQueue: pendingQueue.length,
+        autoBlockToday: Number(state.autoBlockToday ?? 0),
+        pausedUntil: Number(state.autoBlockPausedUntil ?? 0),
+      },
+      settings: {
+        enabled: Boolean(state.enabled),
+        highlightMode: Boolean(state.highlightMode),
+        checkUsername: Boolean(state.checkUsername),
+        onlyComments: Boolean(state.onlyComments),
+        blockEmoji: Boolean(state.blockEmoji),
+        blockSpecialChars: Boolean(state.blockSpecialChars),
+        blockGrok: Boolean(state.blockGrok),
+        cloudEnabled: Boolean(state.cloudEnabled),
+        cloudOwnerRepo: String(state.cloudOwnerRepo ?? ''),
+        language: String(state.language ?? 'system'),
+      },
+      sync: {
+        lastSyncTime: Number(state.lastSyncTime ?? 0),
+        syncStatus: String(state.syncStatus ?? ''),
+        syncError: String(state.syncError ?? ''),
+      },
+      pendingQueue,
+      eta: state.autoBlockEta ?? {},
+      logs: logs.slice(0, 100),
+    };
+    const blob = new Blob([JSON.stringify(diag, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `xshield-diagnostics-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setStatus(t.diagDone);
+  };
+
   const exportKeywords = (): void => {
     const blob = new Blob([String(state.keywords ?? '')], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -627,6 +674,11 @@ export default function Dashboard() {
               </div>
               <p className="hint">{t.cloudSourceHint}</p>
             <p className="hint">{t.autoBlockNote}</p>
+            <div className="form-grid inline">
+              <button className="plain-button" type="button" onClick={exportDiagnostics} title={t.diagnostics}>
+                <Download size={16} /> {t.diagnostics}
+              </button>
+            </div>
               <div className="card-grid">
                 {blockedUsersOnX.slice(-200).reverse().map((name) => {
                   const info = ((state.queueInfo as Record<string, { displayName?: string; text?: string }>) ?? {})[name];
@@ -927,6 +979,11 @@ export default function Dashboard() {
             </div>
             <p className="hint">{t.cloudSourceHint}</p>
             <p className="hint">{t.autoBlockNote}</p>
+            <div className="form-grid inline">
+              <button className="plain-button" type="button" onClick={exportDiagnostics} title={t.diagnostics}>
+                <Download size={16} /> {t.diagnostics}
+              </button>
+            </div>
           </DataPanel>
         )}
       </section>

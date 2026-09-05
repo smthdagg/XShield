@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const storageData: Record<string, unknown> = {
   keywords: '',
   cloudEnabled: true,
-  cloudKeywords: ['比她骚', '没她好看', '福不黑'].join('\n'),
+  cloudKeywords: ['比她骚', '没她好看', '福不黑', '约同城'].join('\n'),
   autoBlockKeywords: ['比她骚'],
   disabledCloudKeywords: [],
   checkUsername: true,
@@ -85,6 +85,13 @@ describe('content script end-to-end', () => {
           <time>1h</time><a href="/spammy1/status/777">1h</a>
         </article>
       </div>
+      <div data-testid="cellInnerDiv" id="nickname1">
+        <article>
+          <div data-testid="User-Name"><a href="/yuetongcheng">约同城的点我 <span>@yuetongcheng</span></a></div>
+          <div data-testid="tweetText">今天天气不错</div>
+          <time>1h</time><a href="/yuetongcheng/status/888">1h</a>
+        </article>
+      </div>
       <div data-testid="cellInnerDiv" id="reply2">
         <article>
           <div data-testid="User-Name"><a href="/normal2">正常人 <span>@normal2</span></a></div>
@@ -103,10 +110,13 @@ describe('content script end-to-end', () => {
     const normal = document.getElementById('reply2');
     const main = document.getElementById('main');
     const community = document.getElementById('community1');
+    const nickname = document.getElementById('nickname1');
 
     expect(spam?.classList.contains('x-comment-blocker-hidden')).toBe(true);
     expect(normal?.classList.contains('x-comment-blocker-hidden')).toBe(false);
     expect(main?.classList.contains('x-comment-blocker-hidden')).toBe(false);
+    // Layer 3 — nickname detection: clean text, spam display name → hidden.
+    expect(nickname?.classList.contains('x-comment-blocker-hidden')).toBe(true);
     // Community-shared handle: clean text still hidden + auto-block flagged.
     expect(community?.classList.contains('x-comment-blocker-hidden')).toBe(true);
 

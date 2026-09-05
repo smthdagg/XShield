@@ -1127,3 +1127,20 @@ input[type="checkbox"] {
   padding: 1px 6px;
   white-space: nowrap;
 }
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  width: 100%;
+}
+
+.pager button {
+  border: 1px solid #dbe3dd;
+  background: #fff;
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}

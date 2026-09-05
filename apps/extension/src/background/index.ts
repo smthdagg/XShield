@@ -730,9 +730,16 @@ async function notifyContentScripts(message: Record<string, unknown>): Promise<v
  * renders blocked state from it. Records stay put so nothing "drifts".
  */
 async function markBlockedOnX(cleanName: string): Promise<void> {
-  const stored = (await chrome.storage.local.get('blockedUsersOnX')).blockedUsersOnX ?? [];
+  const stored = (
+    await chrome.storage.local.get(getStorageDefaults('blockedUsersOnX', 'blockedAt'))
+  );
+  const ledger = Array.from(new Set([...((stored.blockedUsersOnX as string[]) ?? []), cleanName])).slice(-10000);
+  const blockedAt = { ...((stored.blockedAt as Record<string, number>) ?? {}), [cleanName]: Date.now() };
+  // Keep the timestamp map aligned with the 10000-name ledger cap.
+  const entries = Object.entries(blockedAt).sort((a, b) => b[1] - a[1]).slice(0, 10000);
   await chrome.storage.local.set({
-    blockedUsersOnX: Array.from(new Set([...(stored as string[]), cleanName])).slice(-10000),
+    blockedUsersOnX: ledger,
+    blockedAt: Object.fromEntries(entries),
   });
   autoBlockManager.blockedUsersSet.add(cleanName);
   if (autoBlockManager.blockedUsersSet.size > 10000) {
@@ -746,9 +753,14 @@ async function markBlockedOnX(cleanName: string): Promise<void> {
 }
 
 async function markUnblockedOnX(cleanName: string): Promise<void> {
-  const stored = (await chrome.storage.local.get('blockedUsersOnX')).blockedUsersOnX ?? [];
+  const stored = (
+    await chrome.storage.local.get(getStorageDefaults('blockedUsersOnX', 'blockedAt'))
+  );
+  const blockedAt = { ...((stored.blockedAt as Record<string, number>) ?? {}) };
+  delete blockedAt[cleanName];
   await chrome.storage.local.set({
-    blockedUsersOnX: (stored as string[]).filter((name) => name !== cleanName),
+    blockedUsersOnX: ((stored.blockedUsersOnX as string[]) ?? []).filter((name) => name !== cleanName),
+    blockedAt,
   });
   autoBlockManager.blockedUsersSet.delete(cleanName);
 }

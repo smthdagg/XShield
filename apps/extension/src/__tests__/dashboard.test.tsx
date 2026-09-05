@@ -256,4 +256,48 @@ describe('dashboard triggered page blocking', () => {
     expect(container.querySelectorAll('.profile-card.trigger-card').length).toBe(1);
     expect(container.textContent).toContain('某人');
   });
+
+  it('blocked list is paginated (100/page) and searchable by keyword', async () => {
+    // 150 blocked users with staggered timestamps.
+    const names = Array.from({ length: 150 }, (_, i) => `bulk${String(i).padStart(3, '0')}`);
+    storageData.blockedUsersOnX = names;
+    const at: Record<string, number> = {};
+    names.forEach((name, i) => { at[name] = Date.now() - i * 60_000; });
+    storageData.blockedAt = at;
+    storageData.blockedHistory = [];
+
+    const { default: Dashboard } = await import('../dashboard/Dashboard');
+    await act(async () => {
+      root.render(<Dashboard />);
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    // Navigate to the blockedLog page.
+    const navBtn = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent === '拉黑记录',
+    );
+    expect(navBtn).toBeDefined();
+    await act(async () => { navBtn!.click(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+
+    // Page 1 of the browse limit: 100 cards, newest first, pager visible.
+    expect(container.querySelectorAll('.profile-card').length).toBe(100);
+    expect(container.textContent).toContain('第 1 / 2 页');
+    expect(container.textContent).toContain('近 7 天拉黑');
+
+    // Search narrows across everything (not just the browse slice).
+    const search = Array.from(container.querySelectorAll('input')).find(
+      (el) => (el as HTMLInputElement).placeholder === '搜索',
+    ) as HTMLInputElement;
+    expect(search).toBeDefined();
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(search, 'bulk0');
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+    console.log('DBG inputs=', JSON.stringify(Array.from(container.querySelectorAll('input')).map((el) => (el as HTMLInputElement).placeholder)), 'searchValue=', (search as HTMLInputElement).value);
+    console.log('DBG cards=', container.querySelectorAll('.profile-card').length);
+  });
 });

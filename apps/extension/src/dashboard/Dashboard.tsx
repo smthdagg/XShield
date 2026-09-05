@@ -72,6 +72,7 @@ const DEFAULTS: Record<string, unknown> = {
   autoBlockBatchLimit: 30,
   autoBlockDelaySeconds: 5,
   blockedUsersOnX: [] as string[],
+  blockedAt: {} as Record<string, number>,
   lastSyncTime: 0,
   syncStatus: '',
   syncError: '',
@@ -160,6 +161,34 @@ function send(message: Record<string, unknown>): Promise<unknown> {
 
 const VIEW_IDS: ViewId[] = ['triggered', 'blockedLog', 'whitelist', 'rules', 'logs', 'settings'];
 const LAST_VIEW_KEY = 'xshieldLastView';
+
+export interface BlockedEntry { name: string; at: number }
+
+/** Pure filter+pagination for the blocked-users database view (exported for tests). */
+export function filterAndPageBlocked(
+  entries: BlockedEntry[],
+  query: string,
+  page: number,
+  pageSize: number,
+  browseLimit: number,
+  displayNames: Record<string, string>,
+): { items: BlockedEntry[]; total: number; pages: number } {
+  const q = query.trim().toLowerCase();
+  const matched = q
+    ? entries.filter(
+        (entry) =>
+          entry.name.toLowerCase().includes(q) ||
+          (displayNames[entry.name] ?? '').toLowerCase().includes(q),
+      )
+    : entries.slice(0, browseLimit);
+  const pages = Math.max(1, Math.ceil(matched.length / pageSize));
+  const current = Math.min(Math.max(0, page), pages - 1);
+  return {
+    items: matched.slice(current * pageSize, current * pageSize + pageSize),
+    total: matched.length,
+    pages,
+  };
+}
 
 export default function Dashboard() {
   const [state, setState] = useState<Record<string, unknown>>(() => ({ ...DEFAULTS }));
@@ -472,6 +501,8 @@ export default function Dashboard() {
   // rules page state
   const [cloudQuery, setCloudQuery] = useState('');
   const [editingKeyword, setEditingKeyword] = useState<{ old: string; value: string } | null>(null);
+  const [blockedQuery, setBlockedQuery] = useState('');
+  const [blockedPage, setBlockedPage] = useState(0);
   const visibleCloudKeywords = cloudKeywords.filter((k) => (cloudQuery ? k.includes(cloudQuery.toLowerCase()) : true));
 
   // triggered page state
@@ -514,6 +545,40 @@ export default function Dashboard() {
   const selectedNames = Array.from(
     new Set(selectedRecords.map((item) => extractCleanScreenName(item.user ?? '')).filter(Boolean)),
   );
+
+  // Blocked-users "database view": newest first, browse limited to the most
+  // recent slice; anything older must be found via search. 100 per page.
+  const BLOCKED_BROWSE_LIMIT = 300;
+  const BLOCKED_PAGE_SIZE = 100;
+  const blockedAtMap = (state.blockedAt as Record<string, number>) ?? {};
+  const blockedWithTime = blockedUsersOnX
+    .map((name) => ({ name, at: blockedAtMap[name] ?? 0 }))
+    .sort((a, b) => b.at - a.at);
+  // No search: browse only the newest slice; searching looks at everything.
+  const queueInfoMap = (state.queueInfo as Record<string, { displayName?: string; text?: string }>) ?? {};
+  const displayNames: Record<string, string> = {};
+  for (const [key, value] of Object.entries(queueInfoMap)) displayNames[key] = value.displayName ?? '';
+  const { items: blockedPageItems, total: matchedBlockedCount, pages: totalBlockedPages } =
+    filterAndPageBlocked(blockedWithTime, blockedQuery, blockedPage, BLOCKED_PAGE_SIZE, BLOCKED_BROWSE_LIMIT, displayNames);
+  const blockedBrowseLimit = BLOCKED_BROWSE_LIMIT;
+
+  // Daily blocked counts for the last 7 days (from the blockedAt ledger).
+  const dailyBlocked = (() => {
+    const days: Array<{ key: string; count: number }> = [];
+    const now = new Date();
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+      days.push({ key: `${d.getMonth() + 1}-${d.getDate()}`, count: 0 });
+    }
+    const index = new Map(days.map((d) => [d.key, d]));
+    for (const ts of Object.values(blockedAtMap)) {
+      if (!ts) continue;
+      const d = new Date(ts);
+      const bucket = index.get(`${d.getMonth() + 1}-${d.getDate()}`);
+      if (bucket) bucket.count++;
+    }
+    return days;
+  })();
 
   const navItems: Array<{ id: ViewId; label: string; icon: ReactNode }> = [
     { id: 'triggered', label: t.triggered, icon: <ListChecks size={18} /> },
@@ -632,20 +697,6 @@ export default function Dashboard() {
               </label>
             </div>
             <p className="hint">{t.autoBlockNote}</p>
-            <p className="hint">{t.shareHint}</p>
-            <div className="form-grid inline">
-              <label>
-                <span>{t.githubTokenLabel}</span>
-                <input
-                  type="password"
-                  value={String(state.githubToken ?? '')}
-                  onChange={(e) => setValue('githubToken', e.currentTarget.value)}
-                />
-              </label>
-              <button className="plain-button" type="button" disabled={syncing} onClick={shareHandles}>
-                <Upload size={16} className={syncing ? 'spin' : ''} /> {t.shareHandles}
-              </button>
-            </div>
             <div className="card-grid">
               {filteredHistory.map((item) => {
                 const handle = extractCleanScreenName(item.user ?? '');
@@ -738,13 +789,19 @@ export default function Dashboard() {
                   <strong>{blockedUsersOnX.length}</strong>
                 </article>
               </div>
-              <div className="form-grid inline">
-              <button className="plain-button" type="button" onClick={exportDiagnostics} title={t.diagnostics}>
-                <Download size={16} /> {t.diagnostics}
-              </button>
-            </div>
-              <div className="card-grid">
-                {blockedUsersOnX.slice(-200).reverse().map((name) => {
+              <p className="hint">
+                {t.dailyBlockedLabel}：{dailyBlocked.map((d) => `${d.key} · ${d.count}`).join('　')}
+              </p>
+                <div className="card-grid">
+                <div className="form-grid inline">
+                  <input
+                    placeholder={t.search}
+                    value={blockedQuery}
+                    onChange={(e) => { setBlockedQuery(e.currentTarget.value); setBlockedPage(0); }}
+                  />
+                </div>
+                {blockedPageItems.map((entry) => {
+                  const name = entry.name;
                   const info = ((state.queueInfo as Record<string, { displayName?: string; text?: string }>) ?? {})[name];
                   return (
                     <div className="profile-card" key={name}>
@@ -756,6 +813,7 @@ export default function Dashboard() {
                       >
                         <span className="history-display">{info?.displayName || name}</span>
                         <span className="history-handle">@{name}</span>
+                        {entry.at > 0 && <small>{formatTime(entry.at)}</small>}
                         <ExternalLink size={13} className="profile-card-open" />
                       </div>
                       {info?.text ? <p className="profile-card-text">{info.text}</p> : null}
@@ -775,6 +833,20 @@ export default function Dashboard() {
                     </div>
                   );
                 })}
+                {matchedBlockedCount > blockedBrowseLimit && !blockedQuery && (
+                  <p className="hint">仅显示最新 {blockedBrowseLimit} 个；更早的用户请用上方搜索定位后解除拉黑。</p>
+                )}
+                {totalBlockedPages > 1 && (
+                  <div className="pager">
+                    <span className="toolbar-status">{matchedBlockedCount} 条 · 第 {blockedPage + 1} / {totalBlockedPages} 页</span>
+                    {blockedPage > 0 && (
+                      <button type="button" onClick={() => setBlockedPage(blockedPage - 1)}>‹ 上一页</button>
+                    )}
+                    {blockedPage < totalBlockedPages - 1 && (
+                      <button type="button" onClick={() => setBlockedPage(blockedPage + 1)}>下一页 ›</button>
+                    )}
+                  </div>
+                )}
                 {blockedUsersOnX.length === 0 && <p className="empty-state">{t.blockedEmpty}</p>}
               </div>
             </DataPanel>

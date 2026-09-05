@@ -59,6 +59,7 @@ const STORAGE_DEFAULTS: Record<string, unknown> = {
   syncError: '',
   cloudETag: '',
   blockedUsersOnX: [],
+  blockedAt: {},
   historyFilterReason: 'all',
   disabledCloudKeywords: [],
   autoBlockQueue: [],

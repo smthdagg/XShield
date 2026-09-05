@@ -937,9 +937,9 @@ async function feedCommunityHandles(): Promise<void> {
     const { autoBlockQueue: queue } = await chrome.storage.local.get(
       getStorageDefaults('autoBlockQueue'),
     );
-    const queueList = (queue as string[]) ?? [];
+    const queueSet = new Set((queue as string[]) ?? []);
     let inFlight = 0;
-    for (const name of queueList) {
+    for (const name of queueSet) {
       if (community.has(name)) inFlight++;
     }
 
@@ -947,7 +947,7 @@ async function feedCommunityHandles(): Promise<void> {
     for (const name of community) {
       if (feed.length >= COMMUNITY_FEED_BATCH) break;
       if (inFlight + feed.length >= COMMUNITY_QUEUE_TARGET) break;
-      if (ledger.has(name) || whitelist.has(name) || dismissed.has(name) || queueList.includes(name)) continue;
+      if (ledger.has(name) || whitelist.has(name) || dismissed.has(name) || queueSet.has(name)) continue;
       feed.push(name);
     }
     if (feed.length === 0) return;

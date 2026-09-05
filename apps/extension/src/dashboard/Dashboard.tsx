@@ -522,12 +522,16 @@ export default function Dashboard() {
   const filterLabel = (reason: string): string =>
     reason === BLOCKED_FILTER ? '已拉黑' : reason === 'all' ? '未拉黑' : reason;
 
+  const whitelistMembers = new Set(whitelist);
   const filteredHistory = blockedHistory.filter((item) => {
     const handle = extractCleanScreenName(item.user ?? '');
     const isBlocked = Boolean(handle) && blockedUsersOnX.includes(handle);
+    // Whitelisted users count as handled: their records leave the working
+    // list (this is what makes the 白名单 click visibly react).
+    const isWhitelisted = Boolean(handle) && whitelistMembers.has(handle);
     if (triggerFilter === BLOCKED_FILTER) {
       if (!isBlocked) return false;
-    } else if (isBlocked) {
+    } else if (isBlocked || isWhitelisted) {
       return false;
     } else if (triggerFilter !== 'all') {
       if (item.reason !== triggerFilter) return false;

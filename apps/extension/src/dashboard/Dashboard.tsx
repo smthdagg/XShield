@@ -13,6 +13,8 @@ import {
   Ban,
   CheckCircle2,
   Download,
+  Eye,
+  EyeOff,
   ExternalLink,
   ListChecks,
   Pencil,
@@ -521,6 +523,7 @@ export default function Dashboard() {
   const [editingKeyword, setEditingKeyword] = useState<{ old: string; value: string } | null>(null);
   const [blockedQuery, setBlockedQuery] = useState('');
   const [blockedPage, setBlockedPage] = useState(0);
+  const [showToken, setShowToken] = useState(false);
   const visibleCloudKeywords = cloudKeywords.filter((k) => (cloudQuery ? k.includes(cloudQuery.toLowerCase()) : true));
 
   // triggered page state
@@ -1153,11 +1156,20 @@ export default function Dashboard() {
               <div className="form-grid inline">
                 <label>
                   <span>{t.githubTokenLabel}</span>
-                  <input
-                    type="password"
-                    value={String(state.githubToken ?? '')}
-                    onChange={(e) => setValue('githubToken', e.currentTarget.value)}
-                  />
+                  <span className="token-field">
+                    <input
+                      type={showToken ? 'text' : 'password'}
+                      value={String(state.githubToken ?? '')}
+                      placeholder={showToken ? (state.githubToken ? '当前已保存令牌' : '未设置') : ''}
+                      onChange={(e) => setValue('githubToken', e.currentTarget.value)}
+                    />
+                    <button type="button" title={showToken ? t.hide : t.show} onClick={() => setShowToken(!showToken)}>
+                      {showToken ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                    <button type="button" title={t.clearToken} onClick={() => setValue('githubToken', '')}>
+                      <Trash2 size={14} />
+                    </button>
+                  </span>
                 </label>
                 <button className="plain-button" type="button" disabled={syncing} onClick={shareHandles}>
                   <Upload size={16} className={syncing ? 'spin' : ''} /> {t.shareHandles}

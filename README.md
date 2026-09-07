@@ -16,14 +16,38 @@
 
 所有人拉黑的数据可**手动共享**进社区共享黑名单仓库：你在设置页「同步与共享」填好 GitHub Token 后点「共享拉黑名单」上传；其他用户点「同步黑名单」**手动拉取**后生效。**同步与共享全部为手动操作，无自动同步。**
 
-### 安装（浏览器加载即可）
+### 安装（解压即用）
 
-1. 到 [GitHub Releases](https://github.com/smthdagg/XShield/releases) 下载最新 `xshield-vX.Y.Z.zip` 并解压（或自行构建 `apps/extension/dist` 目录）；
-2. Chrome 打开 `chrome://extensions` → 右上角开启「开发者模式」→ 点「加载已解压的扩展程序」→ 选择 `dist` 目录；
-3. 把 XShield 固定到工具栏，用你的 X 账号登录 x.com。
+**方式 A：从 Release 下载安装包（推荐）**
+
+1. 打开 [GitHub Releases](https://github.com/smthdagg/XShield/releases) 页面，下载最新版的 `xshield-vX.Y.Z.zip`（每个版本都附有已构建好的安装包）；
+2. 解压 zip，得到一个内含 `manifest.json` 的文件夹（例如 `xshield-1.1.19`）；
+3. Chrome 打开 `chrome://extensions` → 右上角开启「**开发者模式**」→ 点「**加载已解压的扩展程序**」→ 选择刚才解压的文件夹；
+4. 把 XShield 固定到工具栏，用你的 X 账号登录 [x.com](https://x.com)。
+
+**方式 B：从源码自行构建**
+
+```bash
+git clone https://github.com/smthdagg/XShield.git
+cd XShield
+pnpm install
+pnpm build        # 产物：apps/extension/dist
+```
+
+加载 `apps/extension/dist` 即可（步骤同 A 的 3、4）。构建要求 Node ≥ 22。
+
+**更新扩展**：下载新版本 zip → 在 `chrome://extensions` 点扩展卡片上的「重新加载」（或移除后重新加载新文件夹）→ **刷新已打开的 X 页面**（更新后旧页面不会自动注入新代码）。
+
+**安装排错**
+
+| 现象 | 处理 |
+|------|------|
+| 「扩展程序包无效」/无法加载 | 确认选择的是**解压后的文件夹**（内含 `manifest.json`），不是 zip 本身；重新解压再试 |
+| 加载后没有「重新加载」按钮 | 确认右上角开发者模式已开启 |
+| 过滤不生效 | 刷新 X 页面；确认扩展已启用 |
+| 拉黑不执行 | 打开 x.com 并保持登录（拉黑依赖 X 会话），日志页查看原因 |
 
 > 拉黑功能依赖当前浏览器的 X 登录状态；未登录时过滤功能照常可用，但拉黑会失败。
-> 更新扩展后，已打开的 X 页面刷新一次即可生效。
 
 ### 使用方法
 
@@ -71,14 +95,38 @@ MIT License，详见 [LICENSE](LICENSE)。
 
 A browser extension that protects your X (Twitter) timeline: it auto-hides spam replies in comment sections, queues the offending accounts for a real block, and blocks them at a safe pace — plus an optional manually-synced community blocklist.
 
-### Install (just load it in the browser)
+### Install (unzip & load)
 
-1. Download the latest `xshield-vX.Y.Z.zip` from [GitHub Releases](https://github.com/smthdagg/XShield/releases) and unzip it (or build `apps/extension/dist` yourself);
-2. Chrome → `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select `dist`;
-3. Pin XShield to the toolbar and log in to x.com.
+**Option A: release package (recommended)**
+
+1. Open [GitHub Releases](https://github.com/smthdagg/XShield/releases) and download the latest `xshield-vX.Y.Z.zip` (every release ships a pre-built package);
+2. Unzip it — you get a folder containing `manifest.json` (e.g. `xshield-1.1.19`);
+3. Chrome → `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select that folder;
+4. Pin XShield to the toolbar and log in to [x.com](https://x.com).
+
+**Option B: build from source**
+
+```bash
+git clone https://github.com/smthdagg/XShield.git
+cd XShield
+pnpm install
+pnpm build        # output: apps/extension/dist
+```
+
+Then load `apps/extension/dist` (steps 3–4 of Option A). Building requires Node ≥ 22.
+
+**Updating**: download the new zip → click **Reload** on the extension card at `chrome://extensions` (or remove and load the new folder) → **refresh already-open X tabs** (old pages don't pick up new code automatically).
+
+**Troubleshooting**
+
+| Symptom | Fix |
+|---------|-----|
+| "Package is invalid" / won't load | Select the **unzipped folder** containing `manifest.json`, not the zip; re-unzip and retry |
+| No Reload button | Make sure Developer mode is on |
+| Filtering not working | Refresh the X page; check the extension is enabled |
+| Blocking not executing | Open x.com and stay logged in (blocking needs an X session); check the Logs page |
 
 > Blocking requires being logged in to x.com; filtering works without login.
-> After updating the extension, refresh already-open X tabs once.
 
 ### Usage
 

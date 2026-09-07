@@ -8,7 +8,14 @@ X(Twitter) comment spam blocking + trigger-list auto-blocking + community shared
 
 ## 1. Installation
 
-1. Build the extension (or use a prebuilt `apps/extension/dist`):
+**Option A: release package (recommended)**
+
+1. Download the latest `xshield-vX.Y.Z.zip` from [GitHub Releases](https://github.com/smthdagg/XShield/releases) (every release ships a pre-built package) and unzip it into a folder containing `manifest.json`;
+2. Chrome → `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select that folder.
+
+**Option B: build from source**
+
+1. Build the extension (Node ≥ 22 required):
 
    ```
    corepack enable
@@ -16,14 +23,11 @@ X(Twitter) comment spam blocking + trigger-list auto-blocking + community shared
    pnpm build
    ```
 
-2. Open `chrome://extensions` in Chrome → enable **Developer mode** → **Load unpacked** → select `apps/extension/dist`.
+2. Chrome → `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select `apps/extension/dist`.
 
-3. Click the XShield toolbar icon → **打开面板 (Open dashboard)**. The dashboard sidebar shows the current version.
+**After installing**: click the XShield toolbar icon → **open the dashboard**; the current version is shown at the sidebar bottom.
 
-> Blocking requires being logged in to x.com in this Chrome profile (reads the ct0 session cookie). Without login you get filtering only.
-> **After updating the extension, refresh already-open X tabs** so the new content script is injected (a Chrome mechanism).
-
----
+**Updating**: download the new zip → click **Reload** on the extension card at `chrome://extensions` (or remove and load the new folder) → **refresh already-open X tabs**. On "Package is invalid", make sure you selected the **unzipped folder**, not the zip.
 
 ## 2. Core model (read this first)
 
@@ -96,7 +100,7 @@ Notes:
 
 Spam accounts blocked by anyone can be shared with everyone:
 
-- **Download (automatic for all users)**: each sync also fetches `handles.txt` from the project repo — matching accounts get their replies hidden and enter the pending queue (reason 社区共享)
+- **Download (manual sync)**: the blacklist sync (设置 → 同步与共享 → 同步黑名单) fetches `handles.txt` from the project repo — matching accounts get their replies hidden and enter the pending queue (reason 社区共享)
 - **Share (optional, token required)**: fill a GitHub Token in 总设置 (needs Contents write access to the library repo) → click 共享拉黑名单到项目仓库 → your ledger handles are merged into the repo (deduplicated, never overwriting others' data)
 - **Opt out**: deleting a 社区共享 record permanently excludes that handle; whitelisting also exempts
 - Without a token you only download — nothing is ever uploaded
@@ -107,7 +111,7 @@ Spam accounts blocked by anyone can be shared with everyone:
 
 All three flows live in the dashboard:
 
-1. **Download**: Rules & sync → 立即同步 (plus a 6-h automatic sync).
+1. **Download (manual)**: Rules & sync → 同步规则 (no auto-sync; every click pulls fresh).
 2. **Local words**: Rules & sync → my library → add/edit/delete (affects you only).
 3. **Publish to the cloud (effective for everyone, token required)**:
    - fill a GitHub Token in 总设置. How to create one (fine-grained, least

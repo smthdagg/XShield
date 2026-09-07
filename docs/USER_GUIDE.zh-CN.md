@@ -8,7 +8,14 @@ X(Twitter) 评论区垃圾拦截 + 触发名单自动拉黑 + 社区共享黑名
 
 ## 一、安装
 
-1. 构建扩展（或直接使用已构建的 `apps/extension/dist`）：
+**方式 A：Release 安装包（推荐）**
+
+1. 打开 [GitHub Releases](https://github.com/smthdagg/XShield/releases) 下载最新 `xshield-vX.Y.Z.zip`（每个版本都附带已构建好的安装包），解压得到含 `manifest.json` 的文件夹；
+2. Chrome 打开 `chrome://extensions` → 右上角开启**开发者模式** → **加载已解压的扩展程序** → 选择解压后的文件夹。
+
+**方式 B：从源码构建**
+
+1. 构建扩展（需要 Node ≥ 22）：
 
    ```
    corepack enable
@@ -18,7 +25,9 @@ X(Twitter) 评论区垃圾拦截 + 触发名单自动拉黑 + 社区共享黑名
 
 2. Chrome 打开 `chrome://extensions` → 右上角开启**开发者模式** → **加载已解压的扩展程序** → 选择 `apps/extension/dist`。
 
-3. 点击工具栏 XShield 图标 → **打开面板**。面板侧栏底部显示当前版本号。
+**安装后**：点击工具栏 XShield 图标 → **打开面板**。面板侧栏底部显示当前版本号。
+
+**更新**：下载新版 zip → 在 `chrome://extensions` 点扩展卡片的「重新加载」（或移除后加载新文件夹）→ **刷新已打开的 X 页面**。报"扩展程序包无效"时，确认选的是**解压后的文件夹**而非 zip 本身。
 
 > 拉黑功能依赖当前 Chrome 已登录 x.com（读取登录 Cookie ct0）。未登录时只能过滤，不能拉黑。
 > **更新扩展后，已打开的 X 页面需刷新一次**才会注入新脚本（Chrome 机制）。

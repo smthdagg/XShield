@@ -14,8 +14,6 @@ function cloudApiUrl(ownerRepo: string): string {
 function cloudCdnUrl(ownerRepo: string): string {
   return `https://fastly.jsdelivr.net/gh/${ownerRepo}@main/keywords.txt`;
 }
-export const SYNC_INTERVAL_MINUTES = 360;
-export const SYNC_INTERVAL_MS = SYNC_INTERVAL_MINUTES * 60 * 1000;
 // eslint-disable-next-line no-misleading-character-class
 export const invisibleCharsRegex = /\p{Default_Ignorable_Code_Point}/gv;
 
@@ -45,6 +43,7 @@ export function getLocalDateString(d = new Date()): string {
 const STORAGE_DEFAULTS: Record<string, unknown> = {
   keywords: '',
   cloudEnabled: true,
+  shareEnabled: true,
   cloudKeywords: '',
   checkUsername: true,
   onlyComments: true,
@@ -65,6 +64,7 @@ const STORAGE_DEFAULTS: Record<string, unknown> = {
   autoBlockQueue: [],
   autoBlockEta: {},
   autoBlockGraceMinutes: 30,
+  blockFailedAt: {},
   communityHandles: [],
   communityDismissed: [],
   githubToken: '',
@@ -93,17 +93,58 @@ export function getStorageDefaults(...keys: string[]): Record<string, unknown> {
 
 export function parseKeywords(text: string): string[] {
   if (!text) return [];
+  const seen = new Set<string>();
   const result: string[] = [];
   for (const line of text.split('\n')) {
     const k = line.replaceAll(invisibleCharsRegex, '').trim();
     if (!k) continue;
-    if (isKeywordRegex(k)) {
-      result.push(k);
-    } else {
-      result.push(k.toLowerCase());
-    }
+    const normalized = isKeywordRegex(k) ? k : k.toLowerCase();
+    // Dedupe on the fly: shared files accumulate duplicates from repeated
+    // merges, and duplicates only waste storage and matching time.
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push(normalized);
   }
   return result;
+}
+
+/** Strict screen-name check: X handles are 1-15 chars of [a-zA-Z0-9_]. */
+export function isValidScreenName(name: string): boolean {
+  return /^[a-zA-Z0-9_]{1,15}$/.test(name);
+}
+
+/**
+ * Parse a handle list (handles.txt) with format validation: every line is
+ * cleaned exactly like the local ledger (`extractCleanScreenName`), and lines
+ * that cannot yield a valid handle (URLs, CJK text, symbols) are rejected
+ * instead of being stored as-is. Returns the valid handles and the rejected
+ * lines, so the caller can log a format audit.
+ */
+export function parseScreenNames(text: string): { handles: string[]; skipped: string[] } {
+  const seen = new Set<string>();
+  const handles: string[] = [];
+  const skipped: string[] = [];
+  for (const line of text.split('\n')) {
+    const cleaned = line.replaceAll(invisibleCharsRegex, '').trim();
+    if (!cleaned) continue;
+    // Strict mode: a handle line may carry an optional @ or / prefix and
+    // nothing else. URLs and other junk must be rejected, not re-parsed for
+    // fragments (extractCleanScreenName is deliberately loose for user input,
+    // but the shared file must stay machine-clean to avoid format drift).
+    if (!/^[@/]?[a-zA-Z0-9_]{1,15}$/.test(cleaned)) {
+      skipped.push(cleaned.slice(0, 120));
+      continue;
+    }
+    const candidate = extractCleanScreenName(cleaned);
+    if (!candidate || !isValidScreenName(candidate)) {
+      skipped.push(cleaned.slice(0, 120));
+      continue;
+    }
+    if (seen.has(candidate)) continue;
+    seen.add(candidate);
+    handles.push(candidate);
+  }
+  return { handles, skipped };
 }
 
 function handleApiUrl(ownerRepo: string): string {
@@ -113,7 +154,8 @@ function handleCdnUrl(ownerRepo: string): string {
   return `https://fastly.jsdelivr.net/gh/${ownerRepo}@main/handles.txt`;
 }
 
-export async function syncCloudKeywords(ownerRepo: string = DEFAULT_CLOUD_OWNER_REPO): Promise<boolean> {
+/** Part 1 of sync: the keyword rules file (keywords.txt). Manual only. */
+export async function syncCloudRules(ownerRepo: string = DEFAULT_CLOUD_OWNER_REPO): Promise<boolean> {
   const { cloudEnabled } = await browserApi.storage.local.get(getStorageDefaults('cloudEnabled'));
   if (!cloudEnabled) return false;
 
@@ -187,33 +229,9 @@ export async function syncCloudKeywords(ownerRepo: string = DEFAULT_CLOUD_OWNER_
     const cloudListSet = new Set(cloudList);
     const cleanedDisabled = disabledCloudKeywords.filter((k) => cloudListSet.has(k));
 
-    // Community blocklist (handles.txt): a separate file so account handles
-    // never mix back into the content keyword library. Missing file (fresh
-    // repo) = empty list, never a sync failure.
-    let communityHandles: string[] = [];
-    try {
-      let hResp: Response;
-      try {
-        hResp = await fetch(handleApiUrl(ownerRepo), { cache: 'no-store', signal: AbortSignal.timeout(15000) });
-        if (!hResp.ok) throw new Error(`API HTTP ${hResp.status}`);
-      } catch {
-        try {
-          hResp = await fetch(`${handleCdnUrl(ownerRepo)}?t=${Date.now()}`, { cache: 'no-store', signal: AbortSignal.timeout(15000) });
-          if (!hResp.ok) throw new Error(`CDN HTTP ${hResp.status}`);
-        } catch {
-          hResp = await fetch(browserApi.runtime.getURL('handles.txt'), { cache: 'no-store' });
-          if (!hResp.ok) throw new Error('bundled handles.txt missing');
-        }
-      }
-      communityHandles = parseKeywords(await hResp.text());
-    } catch {
-      communityHandles = [];
-    }
-
     await browserApi.storage.local.set({
       cloudKeywords: cloudList.join('\n'),
       disabledCloudKeywords: cleanedDisabled,
-      communityHandles,
       cloudETag: newETag,
       lastSyncTime: Date.now(),
       syncStatus: 'ok',
@@ -229,6 +247,41 @@ export async function syncCloudKeywords(ownerRepo: string = DEFAULT_CLOUD_OWNER_
       })
       .catch(() => {});
     return false;
+  }
+}
+
+/**
+ * Part 2 of sync: the shared blacklist file (handles.txt), stored as
+ * `communityHandles`. Manual only. A failed pull keeps the previous list and
+ * reports via the return value — it must not clobber the rules sync status.
+ * Lines that cannot be parsed as valid handles are rejected (format audit).
+ */
+export async function syncCloudHandles(
+  ownerRepo: string = DEFAULT_CLOUD_OWNER_REPO,
+): Promise<{ success: boolean; total?: number; skipped?: number }> {
+  try {
+    let hResp: Response;
+    try {
+      hResp = await fetch(handleApiUrl(ownerRepo), { cache: 'no-store', signal: AbortSignal.timeout(15000) });
+      if (!hResp.ok) throw new Error(`API HTTP ${hResp.status}`);
+    } catch {
+      try {
+        hResp = await fetch(`${handleCdnUrl(ownerRepo)}?t=${Date.now()}`, { cache: 'no-store', signal: AbortSignal.timeout(15000) });
+        if (!hResp.ok) throw new Error(`CDN HTTP ${hResp.status}`);
+      } catch {
+        hResp = await fetch(browserApi.runtime.getURL('handles.txt'), { cache: 'no-store' });
+        if (!hResp.ok) throw new Error('bundled handles.txt missing');
+      }
+    }
+    const { handles, skipped } = parseScreenNames(await hResp.text());
+    await browserApi.storage.local.set({
+      communityHandles: handles,
+      lastSyncTime: Date.now(),
+    });
+    return { success: true, total: handles.length, skipped: skipped.length };
+  } catch (e) {
+    console.warn('[X-Blocker] blacklist sync failed:', e);
+    return { success: false };
   }
 }
 

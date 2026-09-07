@@ -197,16 +197,17 @@ describe('dashboard triggered page blocking', () => {
     expect(bulk?.textContent).toContain('2');
 
     // Confirm bulk block: users are queued, but the records stay in the
-    // triggered list until each block succeeds.
+    // triggered list until each block succeeds. The button now asks a
+    // native confirm() — accept it and click once.
+    const confirmSpy = vi.fn(() => true);
+    vi.stubGlobal('confirm', confirmSpy);
     await act(async () => {
       if (bulk) bulk.click();
     });
     await act(async () => {
-      if (bulk) bulk.click(); // second click within confirm window
-    });
-    await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
     });
+    expect(confirmSpy).toHaveBeenCalled();
     const bulkMessage = sentMessages.find((message) => message.action === 'blockAllHistoryUsers');
     expect(bulkMessage).toBeDefined();
     // All records remain; queued users' blocks will merge the ledger when
@@ -265,6 +266,9 @@ describe('dashboard triggered page blocking', () => {
     names.forEach((name, i) => { at[name] = Date.now() - i * 60_000; });
     storageData.blockedAt = at;
     storageData.blockedHistory = [];
+    // Clear the pending queue seeded by the previous test — this page counts
+    // blocked-users cards only.
+    storageData.autoBlockQueue = [];
 
     const { default: Dashboard } = await import('../dashboard/Dashboard');
     await act(async () => {

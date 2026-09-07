@@ -26,6 +26,7 @@ import {
   X,
 } from 'lucide-react';
 import {
+  DEFAULT_CLOUD_OWNER_REPO,
   extractCleanScreenName,
   isKeywordRegex,
   parseKeywords,
@@ -62,6 +63,7 @@ const DEFAULTS: Record<string, unknown> = {
   blockEmoji: false,
   blockGrok: false,
   cloudEnabled: true,
+  shareEnabled: true,
   cloudOwnerRepo: '',
   autoBlockQueue: [] as string[],
   autoBlockEta: {} as Record<string, number>,
@@ -197,7 +199,8 @@ export default function Dashboard() {
   const [state, setState] = useState<Record<string, unknown>>(() => ({ ...DEFAULTS }));
   const [view, setView] = useState<ViewId>('triggered');
   const [status, setStatus] = useState('');
-  const [syncing, setSyncing] = useState(false);
+  const [syncingRules, setSyncingRules] = useState(false);
+  const [syncingHandles, setSyncingHandles] = useState(false);
 
   const language = getLanguage(String(state.language ?? 'system'));
   const t = dashboardCopy[language];
@@ -248,6 +251,13 @@ export default function Dashboard() {
   const blockedHistory = useMemo(() => (state.blockedHistory as SpamRecord[]) ?? [], [state.blockedHistory]);
   const autoBlockQueue = useMemo(() => (state.autoBlockQueue as string[]) ?? [], [state.autoBlockQueue]);
   const blockedUsersOnX = useMemo(() => (state.blockedUsersOnX as string[]) ?? [], [state.blockedUsersOnX]);
+  // Queue entries that duplicate the ledger can never be re-blocked — show
+  // them as pending-delete duplicates, separate from the real pending queue.
+  // (The background also auto-purges them, so this section is best-effort.)
+  const dupQueueNames = useMemo(
+    () => autoBlockQueue.filter((name) => blockedUsersOnX.includes(name)),
+    [autoBlockQueue, blockedUsersOnX],
+  );
   // Display-side ledger filter: a blocked user must never render as "pending".
   const pendingQueue = useMemo(
     () => autoBlockQueue.filter((name) => !blockedUsersOnX.includes(name)),
@@ -255,15 +265,25 @@ export default function Dashboard() {
   );
   const whitelist = useMemo(() => (state.whitelist as string[]) ?? [], [state.whitelist]);
   const cloudKeywords = useMemo(() => parseKeywords(String(state.cloudKeywords ?? '')), [state.cloudKeywords]);
+  // Rules and blacklist share one repo source (mirrors the settings hint).
+  const cloudRepo = String(state.cloudOwnerRepo ?? '').trim() || DEFAULT_CLOUD_OWNER_REPO;
   const customKeywords = useMemo(() => parseKeywords(String(state.keywords ?? '')), [state.keywords]);
 
   // ---- actions ----
-  const triggerSync = (): void => {
-    setSyncing(true);
-    void send({ action: 'syncNow' })
+  const triggerSyncRules = (): void => {
+    setSyncingRules(true);
+    void send({ action: 'syncRules' })
       .then((res) => setStatus((res as { success?: boolean })?.success ? t.syncOk : t.syncFailed))
       .catch(() => setStatus(t.syncFailed))
-      .finally(() => setSyncing(false));
+      .finally(() => setSyncingRules(false));
+  };
+
+  const triggerSyncHandles = (): void => {
+    setSyncingHandles(true);
+    void send({ action: 'syncHandles' })
+      .then((res) => setStatus((res as { success?: boolean })?.success ? t.syncBlacklistOk : t.syncBlacklistFail))
+      .catch(() => setStatus(t.syncBlacklistFail))
+      .finally(() => setSyncingHandles(false));
   };
 
   const blockOne = (handle: string): void => {
@@ -304,19 +324,11 @@ export default function Dashboard() {
     });
   };
 
-  const [confirmBlockAll, setConfirmBlockAll] = useState(false);
-  const confirmTimer = useMemo(() => ({ current: null as ReturnType<typeof setTimeout> | null }), []);
-
   const blockSelected = (names: string[]): void => {
     if (names.length === 0) return;
-    if (!confirmBlockAll) {
-      setConfirmBlockAll(true);
-      if (confirmTimer.current) clearTimeout(confirmTimer.current);
-      confirmTimer.current = setTimeout(() => setConfirmBlockAll(false), 3000);
-      return;
-    }
-    if (confirmTimer.current) clearTimeout(confirmTimer.current);
-    setConfirmBlockAll(false);
+    // One direct confirmation dialog instead of the old double-click-in-3s
+    // pattern (which silently reset and looked like "nothing happened").
+    if (!window.confirm(t.confirmBlockAllNote.replace('{count}', String(names.length)))) return;
     const queuedNamesSet = new Set(names);
     void send({ action: 'blockAllHistoryUsers', users: names }).then(() => {
       // Card info for the queue page.
@@ -331,13 +343,57 @@ export default function Dashboard() {
       // Records stay in storage after enqueueing (1.5.1 model). The rows
       // leave this working list as soon as the queue write lands (排队中
       // filter); the ledger moves them to 已拉黑 as each block succeeds.
-      setStatus(t.queuedNote.replace('{count}', String(names.length)));
+      setStatus(
+        `${t.queuedNote.replace('{count}', String(names.length))} · ${t.autoBlockToday}: ${String(state.autoBlockToday ?? 0)}/${String(state.autoBlockDailyLimit ?? 300)}`,
+      );
       setSelectedIds([]);
     });
   };
 
   const removeRecord = (id: string, time: number): void => {
     void send({ action: 'removeSpamRecord', id, time });
+  };
+
+  /** Bulk-delete the selected trigger records (toolbar 全选 → 删除). */
+  const deleteSelected = (): void => {
+    if (selectedRecords.length === 0) return;
+    const ids = selectedRecords.map((r) => ({ id: r.id, time: r.time }));
+    void send({ action: 'bulkRemoveRecords', ids }).then((res) => {
+      const removed = (res as { removed?: number })?.removed ?? ids.length;
+      setStatus(t.deletedSelected.replace('{count}', String(removed)));
+    });
+    setSelectedIds([]);
+  };
+
+  /** One-shot purge of every synthetic 社区共享 record (multi-thousand backlog). */
+  const cleanCommunityRecords = (): void => {
+    if (communityRecordCount === 0) return;
+    if (!window.confirm(t.cleanCommunityConfirm.replace('{count}', String(communityRecordCount)))) return;
+    void send({ action: 'bulkRemoveRecords', scope: 'community' }).then((res) => {
+      const removed = (res as { removed?: number })?.removed ?? communityRecordCount;
+      setStatus(t.cleanCommunityDone.replace('{count}', String(removed)));
+    });
+  };
+
+  /** Drop queue entries that duplicate the block ledger (can't be re-blocked). */
+  const deleteDupeQueue = (): void => {
+    if (dupQueueNames.length === 0) return;
+    void send({ action: 'removeFromQueue', names: dupQueueNames }).then(() => {
+      setStatus(t.dupQueueDeleted.replace('{count}', String(dupQueueNames.length)));
+    });
+  };
+
+  /**
+   * Cancel one pending entry completely: wipe all of its trigger records
+   * (so the history backfill can never re-add it) and drop the queue slot.
+   */
+  const removeQueueName = (name: string): void => {
+    const records = ((state.blockedHistory as SpamRecord[]) ?? []).filter(
+      (r) => extractCleanScreenName(r.user ?? '') === name,
+    );
+    for (const r of records) void send({ action: 'removeSpamRecord', id: r.id, time: r.time });
+    void send({ action: 'removeFromQueue', names: [name] });
+    setStatus(`@${name} → ${t.remove}`);
   };
 
   const addWhitelistFromRecord = (handle: string): void => {
@@ -389,26 +445,26 @@ export default function Dashboard() {
 
   /** Owner action: publish the panel's library view to the project keywords.txt. */
   const shareKeywords = (): void => {
-    setSyncing(true);
+    setSyncingRules(true);
     void send({ action: 'shareKeywords' })
       .then((res) => {
         const result = res as { success?: boolean; detail?: string; reason?: string };
         setStatus(result?.success ? result.detail ?? t.shareKeywordsDone : result?.reason || t.shareKeywordsFail);
       })
       .catch(() => setStatus(t.shareKeywordsFail))
-      .finally(() => setSyncing(false));
+      .finally(() => setSyncingRules(false));
   };
 
   /** Owner/contributor action: push the local block ledger to the project. */
   const shareHandles = (): void => {
-    setSyncing(true);
+    setSyncingHandles(true);
     void send({ action: 'shareHandles' })
       .then((res) => {
         const result = res as { success?: boolean; detail?: string; reason?: string };
         setStatus(result?.success ? result.detail ?? t.shareDone : result?.reason || t.shareFail);
       })
       .catch(() => setStatus(t.shareFail))
-      .finally(() => setSyncing(false));
+      .finally(() => setSyncingHandles(false));
   };
 
   /** One-click environment snapshot: real storage state + recent logs. */
@@ -496,6 +552,8 @@ export default function Dashboard() {
 
   // logs page state
   const logs = (state.xshieldLogs as XLogEntry[]) ?? [];
+  // Inline audit trail for the settings "sync & share" section (≤500 items).
+  const syncLogs = logs.filter((entry) => entry.category === 'sync').slice(0, 5);
   const [logLevel, setLogLevel] = useState('all');
   const [logCategory, setLogCategory] = useState('all');
   const [logQuery, setLogQuery] = useState('');
@@ -515,6 +573,8 @@ export default function Dashboard() {
   const [editingKeyword, setEditingKeyword] = useState<{ old: string; value: string } | null>(null);
   const [blockedQuery, setBlockedQuery] = useState('');
   const [blockedPage, setBlockedPage] = useState(0);
+  const [queueFilter, setQueueFilter] = useState('all');
+  const [queuePage, setQueuePage] = useState(0);
   const [showToken, setShowToken] = useState(false);
   const visibleCloudKeywords = cloudKeywords.filter((k) => (cloudQuery ? k.includes(cloudQuery.toLowerCase()) : true));
 
@@ -553,6 +613,15 @@ export default function Dashboard() {
     return true;
   });
   const selectedRecords = filteredHistory.filter((item) => selectedIds.includes(`${item.id}:${item.time}`));
+  // Synthetic 社区共享 records accumulate from past feeding rounds (the
+  // multi-thousand backlog) — they carry no real signal, just visibility.
+  const communityRecordCount = useMemo(
+    () =>
+      ((state.blockedHistory as SpamRecord[]) ?? []).filter((r) =>
+        String(r.id ?? '').startsWith('community:'),
+      ).length,
+    [state.blockedHistory],
+  );
   // True when the working list is empty because every record's user is
   // already blocked (they live under the 已拉黑 filter now).
   const allRecordsBlocked = blockedHistory.length > 0 && blockedHistory.every((item) => {
@@ -577,7 +646,33 @@ export default function Dashboard() {
   for (const [key, value] of Object.entries(queueInfoMap)) displayNames[key] = value.displayName ?? '';
   const { items: blockedPageItems, total: matchedBlockedCount, pages: totalBlockedPages } =
     filterAndPageBlocked(blockedWithTime, blockedQuery, blockedPage, BLOCKED_PAGE_SIZE, BLOCKED_BROWSE_LIMIT, displayNames);
-  const blockedBrowseLimit = BLOCKED_BROWSE_LIMIT;
+
+  // Pending-queue classification: a queued handle is 社区共享 when it comes
+// from the synced community blacklist (communityHandles — the authoritative
+// server list, kept clean locally). History records are only a fallback:
+// they can be truncated (20k cap) or deleted, which would silently mislabel
+// entries as 正常触发. 100 per page — the queue routinely holds thousands.
+  const QUEUE_PAGE_SIZE = 100;
+  const communityQueuedSet = useMemo(() => {
+    const set = new Set(((state.communityHandles as string[]) ?? []).map(extractCleanScreenName).filter(Boolean));
+    for (const r of (state.blockedHistory as SpamRecord[]) ?? []) {
+      if (String(r.id ?? '').startsWith('community:')) {
+        const handle = extractCleanScreenName(r.user ?? '');
+        if (handle) set.add(handle);
+      }
+    }
+    return set;
+  }, [state.communityHandles, state.blockedHistory]);
+  const filteredQueueNames = useMemo(() => {
+    if (queueFilter === 'community') return pendingQueue.filter((name) => communityQueuedSet.has(name));
+    if (queueFilter === 'trigger') return pendingQueue.filter((name) => !communityQueuedSet.has(name));
+    return pendingQueue;
+  }, [pendingQueue, queueFilter, communityQueuedSet]);
+  const queuePageItems = filteredQueueNames.slice(
+    queuePage * QUEUE_PAGE_SIZE,
+    queuePage * QUEUE_PAGE_SIZE + QUEUE_PAGE_SIZE,
+  );
+  const totalQueuePages = Math.max(1, Math.ceil(filteredQueueNames.length / QUEUE_PAGE_SIZE));
 
   // Daily blocked counts for the last 7 days (from the blockedAt ledger).
   const dailyBlocked = (() => {
@@ -675,12 +770,31 @@ export default function Dashboard() {
                 onClick={() => blockSelected(selectedNames)}
               >
                 <Ban size={16} />
-                {confirmBlockAll
-                  ? t.confirmBlock.replace('{count}', String(selectedNames.length))
-                  : `${t.blockAll}(${selectedNames.length})`}
+                {`${t.blockAll}(${selectedNames.length})`}
               </button>
+              <button
+                className="plain-button danger"
+                type="button"
+                disabled={selectedNames.length === 0}
+                onClick={deleteSelected}
+              >
+                <Trash2 size={16} />
+                {`${t.deleteSelected}(${selectedNames.length})`}
+              </button>
+              {communityRecordCount > 0 && (
+                <button
+                  className="plain-button danger"
+                  type="button"
+                  onClick={cleanCommunityRecords}
+                  title={t.cleanCommunityTitle}
+                >
+                  <Trash2 size={16} />
+                  {t.cleanCommunity.replace('{count}', String(communityRecordCount))}
+                </button>
+              )}
             </div>
             <p className="hint">{t.blockHere}</p>
+            <p className="hint">{t.recordsScopeNote.replace('{count}', String(pendingQueue.length))}</p>
             <div className="form-grid inline">
               <label>
                 <span>{t.dailyLimitLabel}</span>
@@ -720,6 +834,9 @@ export default function Dashboard() {
                 const key = `${item.id}:${item.time}`;
                 const isBlocked = handle ? blockedUsersOnX.includes(handle) : false;
                 const isQueued = !isBlocked && Boolean(handle) && autoBlockQueue.includes(handle);
+                // Same handle queued AND blocked: it can't be blocked again,
+                // so it is a duplicate pending deletion, not a pending block.
+                const isDupQueue = isBlocked && Boolean(handle) && autoBlockQueue.includes(handle);
                 return (
                   <div className="profile-card trigger-card" key={key}>
                     <label className="check-inline card-check">
@@ -742,6 +859,7 @@ export default function Dashboard() {
                       <span className="history-display">{item.displayName || item.user || 'unknown'}</span>
                       {handle && <span className="history-handle">@{handle}</span>}
                       {isQueued && <span className="queue-badge">{t.queuedBadge}</span>}
+                      {isDupQueue && <span className="queue-badge dup">{t.dupQueueBadge}</span>}
                       <span className="history-reason">{item.reason ? `[${item.reason}]` : ''}</span>
                       <small>{formatTime(item.time)}</small>
                       <ExternalLink size={13} className="profile-card-open" />
@@ -809,6 +927,74 @@ export default function Dashboard() {
               <p className="hint">
                 {t.dailyBlockedLabel}：{dailyBlocked.map((d) => `${d.key} · ${d.count}`).join('　')}
               </p>
+              {dupQueueNames.length > 0 && (
+                <div className="form-grid inline">
+                  <span className="toolbar-status">{t.dupQueueLabel}：{dupQueueNames.length}</span>
+                  <button className="plain-button danger" type="button" onClick={deleteDupeQueue}>
+                    <Trash2 size={16} /> {t.deleteDupQueue}
+                  </button>
+                </div>
+              )}
+              <p className="settings-subtitle">{t.queueTitle}（{t.queueRemaining} {pendingQueue.length}）</p>
+              <div className="form-grid inline">
+                <select
+                  value={queueFilter}
+                  onChange={(e) => { setQueueFilter(e.currentTarget.value); setQueuePage(0); }}
+                >
+                  <option value="all">{t.queueFilterAll}</option>
+                  <option value="community">{t.queueFilterCommunity}</option>
+                  <option value="trigger">{t.queueFilterTrigger}</option>
+                </select>
+                <span className="toolbar-status">{filteredQueueNames.length} 条</span>
+              </div>
+              <div className="card-grid">
+                {queuePageItems.map((name) => {
+                  const info = ((state.queueInfo as Record<string, { displayName?: string; text?: string }>) ?? {})[name];
+                  const isCommunity = communityQueuedSet.has(name);
+                  return (
+                    <div className="profile-card" key={name}>
+                      <div
+                        className="profile-card-head"
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => window.open(`https://x.com/${name}`, '_blank')}
+                      >
+                        <span className="history-display">{info?.displayName || name}</span>
+                        <span className="history-handle">@{name}</span>
+                        <span className={`queue-badge${isCommunity ? '' : ' trigger'}`}>
+                          {isCommunity ? t.queueFilterCommunity : t.queueFilterTrigger}
+                        </span>
+                      </div>
+                      {info?.text ? <p className="profile-card-text">{info.text}</p> : null}
+                      <span className="row-actions profile-card-actions">
+                        <button
+                          type="button"
+                          className="btn-whitelist"
+                          title={t.whitelist}
+                          onClick={() => addWhitelistFromRecord(name)}
+                        >
+                          <CheckCircle2 size={14} /> {t.whitelist}
+                        </button>
+                        <button type="button" title={t.remove} onClick={() => removeQueueName(name)}>
+                          <Trash2 size={16} />
+                        </button>
+                      </span>
+                    </div>
+                  );
+                })}
+                {filteredQueueNames.length === 0 && <p className="empty-state">{t.queueEmpty}</p>}
+              </div>
+              {totalQueuePages > 1 && (
+                <div className="pager">
+                  <span className="toolbar-status">{filteredQueueNames.length} 条 · 第 {queuePage + 1} / {totalQueuePages} 页</span>
+                  {queuePage > 0 && (
+                    <button type="button" onClick={() => setQueuePage(queuePage - 1)}>‹ 上一页</button>
+                  )}
+                  {queuePage < totalQueuePages - 1 && (
+                    <button type="button" onClick={() => setQueuePage(queuePage + 1)}>下一页 ›</button>
+                  )}
+                </div>
+              )}
                 <div className="card-grid">
                 <div className="form-grid inline">
                   <input
@@ -850,8 +1036,8 @@ export default function Dashboard() {
                     </div>
                   );
                 })}
-                {matchedBlockedCount > blockedBrowseLimit && !blockedQuery && (
-                  <p className="hint">仅显示最新 {blockedBrowseLimit} 个；更早的用户请用上方搜索定位后解除拉黑。</p>
+                {matchedBlockedCount > BLOCKED_BROWSE_LIMIT && !blockedQuery && (
+                  <p className="hint">仅显示最新 {BLOCKED_BROWSE_LIMIT} 个；更早的用户请用上方搜索定位后解除拉黑。</p>
                 )}
                 {totalBlockedPages > 1 && (
                   <div className="pager">
@@ -897,13 +1083,16 @@ export default function Dashboard() {
 
         {view === 'rules' && (
           <div className="stack">
-            <DataPanel title={t.cloudLibrary} meta={`${cloudKeywords.length}`}>
+            <DataPanel
+              title={t.cloudLibrary}
+              meta={`${t.repoLabel}：${cloudRepo} · ${cloudKeywords.length}`}
+            >
               <div className="form-grid inline">
-                <button className="solid-button" type="button" disabled={syncing} onClick={triggerSync}>
-                  <Download size={16} className={syncing ? 'spin' : ''} /> {syncing ? t.syncing : t.syncNow}
+                <button className="solid-button" type="button" disabled={syncingRules} onClick={triggerSyncRules}>
+                  <Download size={16} className={syncingRules ? 'spin' : ''} /> {syncingRules ? t.syncing : t.syncRules}
                 </button>
-                <button className="plain-button" type="button" disabled={syncing} title={t.shareKeywords} onClick={shareKeywords}>
-                  <Upload size={16} className={syncing ? 'spin' : ''} /> {t.shareKeywords}
+                <button className="plain-button" type="button" disabled={syncingRules || !state.shareEnabled} title={t.shareKeywordsHint} onClick={shareKeywords}>
+                  <Upload size={16} className={syncingRules ? 'spin' : ''} /> {t.shareKeywords}
                 </button>
                 <span className="toolbar-status">
                   {Number(state.lastSyncTime ?? 0) > 0 ? formatTime(Number(state.lastSyncTime)) : ''}
@@ -911,6 +1100,8 @@ export default function Dashboard() {
                   {state.syncStatus === 'error' ? ` · ${t.syncFailed}` : ''}
                 </span>
               </div>
+              <p className="hint">{t.rulesSyncHint}</p>
+              <p className="hint">{t.syncManualHint}</p>
               <div className="form-grid inline">
                 <input
                   placeholder={t.search}
@@ -1062,7 +1253,7 @@ export default function Dashboard() {
                   <span>{t.enabled}</span>
                   <Toggle checked={Boolean(state.enabled)} onChange={(v) => setValue('enabled', v)} />
                 </label>
-                <label>
+                <label className="field-row compact">
                   <span>{t.displayMode}</span>
                   <select
                     value={state.highlightMode ? 'highlight' : 'hide'}
@@ -1072,7 +1263,7 @@ export default function Dashboard() {
                     <option value="highlight">{t.modeHighlight}</option>
                   </select>
                 </label>
-                <label>
+                <label className="field-row compact">
                   <span>{t.language}</span>
                   <select value={String(state.language ?? 'system')} onChange={(e) => setValue('language', e.currentTarget.value)}>
                     <option value="system">{t.system}</option>
@@ -1117,7 +1308,7 @@ export default function Dashboard() {
                   <span>{t.cloudEnabled}</span>
                   <Toggle checked={Boolean(state.cloudEnabled)} onChange={(v) => setValue('cloudEnabled', v)} />
                 </label>
-                <label>
+                <label className="field-row">
                   <span>{t.cloudOwnerRepo}</span>
                   <input
                     value={String(state.cloudOwnerRepo ?? '')}
@@ -1130,6 +1321,58 @@ export default function Dashboard() {
             </div>
 
             <div className="settings-section">
+              <h3>{t.secShare}</h3>
+              <p className="hint">{t.syncShareHint}</p>
+              <p className="hint">{t.shareEnabledHint}</p>
+              <div className="settings-grid">
+                <label className="check-label">
+                  <span>{t.shareEnabledLabel}</span>
+                  <Toggle checked={Boolean(state.shareEnabled)} onChange={(v) => setValue('shareEnabled', v)} />
+                </label>
+                <label className="field-row">
+                  <span>{t.githubTokenLabel}</span>
+                  <span className="token-field">
+                    <input
+                      type={showToken ? 'text' : 'password'}
+                      value={String(state.githubToken ?? '')}
+                      disabled={!state.shareEnabled}
+                      placeholder={showToken ? (state.githubToken ? '当前已保存令牌' : '未设置') : ''}
+                      onChange={(e) => setValue('githubToken', e.currentTarget.value)}
+                    />
+                    <button type="button" title={showToken ? t.hide : t.show} onClick={() => setShowToken(!showToken)} disabled={!state.shareEnabled}>
+                      {showToken ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                    <button type="button" title={t.clearToken} onClick={() => setValue('githubToken', '')} disabled={!state.shareEnabled}>
+                      <Trash2 size={14} />
+                    </button>
+                  </span>
+                </label>
+              </div>
+              <div className="form-grid inline">
+                <button className="plain-button" type="button" disabled={syncingHandles} onClick={triggerSyncHandles}>
+                  <Download size={16} className={syncingHandles ? 'spin' : ''} /> {syncingHandles ? t.syncing : t.syncBlacklist}
+                </button>
+                <button className="plain-button" type="button" disabled={syncingHandles || !state.shareEnabled} onClick={shareHandles}>
+                  <Upload size={16} className={syncingHandles ? 'spin' : ''} /> {t.shareHandles}
+                </button>
+                <button className="plain-button" type="button" onClick={exportDiagnostics} title={t.diagnostics}>
+                  <Download size={16} /> {t.diagnostics}
+                </button>
+              </div>
+              <p className="settings-subtitle">{t.syncRecords}</p>
+              <div className="compact-list">
+                {syncLogs.map((entry) => (
+                  <div className="list-row log-row" key={entry.id}>
+                    <span className={`log-level ${entry.level}`}>{entry.level}</span>
+                    <span className="history-text">{entry.message}</span>
+                    <small>{new Date(entry.time).toLocaleString()}</small>
+                  </div>
+                ))}
+                {syncLogs.length === 0 && <p className="empty-state">{t.noSyncRecords}</p>}
+              </div>
+            </div>
+
+            <div className="settings-section">
               <h3>{t.supportTitle}</h3>
               <p className="hint">{t.supportHint}</p>
               <div className="form-grid inline">
@@ -1138,36 +1381,6 @@ export default function Dashboard() {
                 </button>
                 <button className="plain-button" type="button" onClick={() => window.open('https://afdian.net/a/smthdagg', '_blank')}>
                   ♥ 爱发电
-                </button>
-              </div>
-            </div>
-
-            <div className="settings-section">
-              <h3>{t.secShare}</h3>
-              <p className="hint">{t.shareHint}</p>
-              <div className="form-grid inline">
-                <label>
-                  <span>{t.githubTokenLabel}</span>
-                  <span className="token-field">
-                    <input
-                      type={showToken ? 'text' : 'password'}
-                      value={String(state.githubToken ?? '')}
-                      placeholder={showToken ? (state.githubToken ? '当前已保存令牌' : '未设置') : ''}
-                      onChange={(e) => setValue('githubToken', e.currentTarget.value)}
-                    />
-                    <button type="button" title={showToken ? t.hide : t.show} onClick={() => setShowToken(!showToken)}>
-                      {showToken ? <EyeOff size={14} /> : <Eye size={14} />}
-                    </button>
-                    <button type="button" title={t.clearToken} onClick={() => setValue('githubToken', '')}>
-                      <Trash2 size={14} />
-                    </button>
-                  </span>
-                </label>
-                <button className="plain-button" type="button" disabled={syncing} onClick={shareHandles}>
-                  <Upload size={16} className={syncing ? 'spin' : ''} /> {t.shareHandles}
-                </button>
-                <button className="plain-button" type="button" onClick={exportDiagnostics} title={t.diagnostics}>
-                  <Download size={16} /> {t.diagnostics}
                 </button>
               </div>
             </div>

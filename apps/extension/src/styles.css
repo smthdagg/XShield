@@ -871,6 +871,13 @@ input[type="checkbox"] {
 .panel-meta { color: #6b7a72; font-size: 12px; }
 .hint { color: #6b7a72; font-size: 12px; margin: 8px 0 0; }
 
+.settings-subtitle {
+  color: #4a5a51;
+  font-size: 13px;
+  font-weight: 600;
+  margin: 16px 0 6px;
+}
+
 .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .metric-grid.small { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
 .metric-card {
@@ -1128,6 +1135,16 @@ input[type="checkbox"] {
   white-space: nowrap;
 }
 
+.queue-badge.dup {
+  color: #8a4b08;
+  background: #fdf0d9;
+}
+
+.queue-badge.trigger {
+  color: #3f7048;
+  background: #effaef;
+}
+
 .pager {
   display: flex;
   align-items: center;
@@ -1145,18 +1162,76 @@ input[type="checkbox"] {
   cursor: pointer;
 }
 
-/* ===== 总设置：紧凑行卡片布局 ===== */
+/* ===== 总设置：分区卡片 ===== */
 .settings-section {
   max-width: 780px;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
+  background: #f6f9f7;
+  border: 1px solid #e0e8e2;
+  border-radius: 12px;
+  padding: 16px 18px;
 }
 
 .settings-section h3 {
-  margin: 0 0 8px;
-  font-size: 11.5px;
+  margin: 0 0 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e3ebe5;
+  font-size: 12.5px;
   font-weight: 700;
-  letter-spacing: 1px;
-  color: #7a897f;
+  letter-spacing: 0.5px;
+  color: #33443b;
+}
+
+/* Full-width form rows: label pinned to a fixed column so every control
+   (repo, token, selects) starts at the same x position across sections. */
+.field-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  min-width: 0;
+  flex: 1 1 100%;
+  font-size: 13px;
+  color: #44544b;
+}
+
+.field-row > span:first-child {
+  flex: 0 0 200px;
+}
+
+.field-row input,
+.field-row select {
+  flex: 1 1 240px;
+  width: auto;
+  min-height: 34px;
+  padding: 8px 10px;
+  border: 1px solid #d5dfd8;
+  border-radius: 8px;
+  font-size: 13px;
+  background: #fff;
+  box-sizing: border-box;
+}
+
+.field-row .token-field input {
+  width: auto;
+  flex: 1 1 auto;
+}
+
+/* Field rows live inside .settings-grid but must not inherit the pill
+   style of toggle/capsule labels. */
+.settings-grid > label.field-row {
+  background: transparent;
+  border: none;
+  padding: 0;
+  width: auto;
+  align-items: center;
+}
+
+/* Short selectors (display mode, language) sit side by side on one row,
+   wrapping on narrow screens. */
+.field-row.compact {
+  flex: 1 1 230px;
 }
 
 .settings-grid {

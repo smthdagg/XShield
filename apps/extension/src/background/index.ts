@@ -18,24 +18,13 @@ import {
   getLocalDateString,
   getStorageDefaults,
   parseKeywords,
-  syncCloudKeywords,
-  SYNC_INTERVAL_MINUTES,
+  syncCloudRules,
+  syncCloudHandles,
   addLog,
 } from '../store/blockerStorage';
 
-const ALARM_NAME = 'cloudKeywordSync';
 /** Pre-0.6.5 upstream keyword source (contains account-handle pollution). */
 const LEGACY_UPSTREAM_REPO = 'amahteru/x-comment-blocker';
-let isSyncing = false;
-
-class SyncLock {
-  constructor() {
-    isSyncing = true;
-  }
-  dispose() {
-    isSyncing = false;
-  }
-}
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
   return {
@@ -193,10 +182,8 @@ async function seedBundledKeywords(): Promise<void> {
   }
 }
 
-async function doSync(): Promise<{ success: boolean; reason?: string }> {
-  if (isSyncing) return { success: false, reason: 'busy' };
-  const _lock = new SyncLock();
-
+/** Manual sync part 1: keyword rules (keywords.txt → cloudKeywords). */
+async function doSyncRules(): Promise<{ success: boolean; reason?: string }> {
   try {
     const items = await chrome.storage.local.get({ cloudOwnerRepo: '' });
     let ownerRepo = (items.cloudOwnerRepo as string) || DEFAULT_CLOUD_OWNER_REPO;
@@ -207,30 +194,50 @@ async function doSync(): Promise<{ success: boolean; reason?: string }> {
       await chrome.storage.local.set({ cloudOwnerRepo: '' });
       void addLog('info', 'sync', '检测到旧版上游词库源，已迁移到清洗后的默认仓库');
     }
-    const success = await syncCloudKeywords(ownerRepo);
-    void addLog(success ? 'info' : 'error', 'sync', `词库同步${success ? '成功' : '失败'}（来源：${ownerRepo}）`);
+    const success = await syncCloudRules(ownerRepo);
+    void addLog(
+      success ? 'info' : 'error',
+      'sync',
+      `规则同步${success ? '成功' : '失败'}（来源：${ownerRepo}）`,
+    );
+    return { success };
+  } catch (e) {
+    return { success: false, reason: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** Manual sync part 2: shared blacklist (handles.txt → communityHandles). */
+async function doSyncHandles(): Promise<{ success: boolean; reason?: string }> {
+  try {
+    const items = await chrome.storage.local.get({ cloudOwnerRepo: '' });
+    const ownerRepo = (items.cloudOwnerRepo as string) || DEFAULT_CLOUD_OWNER_REPO;
+    const res = await syncCloudHandles(ownerRepo);
+    const success = res.success;
+    const skippedNote = (res.skipped ?? 0) > 0 ? `，跳过 ${res.skipped} 行非规范条目` : '';
+    void addLog(
+      success ? 'info' : 'error',
+      'sync',
+      `黑名单同步${success ? '成功' : '失败'}（来源：${ownerRepo}${success ? `，有效 ${res.total ?? 0} 个` : ''}${skippedNote}）`,
+    );
     if (success) {
-      void feedCommunityHandles();
+      // Local copy mirrors the server list minus the user's own ledger;
+      // only then feed the cleaned set into the pending queue.
+      void normalizeStoredLists().then(() => feedCommunityHandles());
     }
     return { success };
-  } finally {
-    _lock.dispose();
+  } catch (e) {
+    return { success: false, reason: e instanceof Error ? e.message : String(e) };
   }
 }
 
 chrome.runtime.onInstalled.addListener(async () => {
   void addLog('info', 'system', `扩展已安装/更新（v${chrome.runtime.getManifest().version}）`);
-  chrome.alarms.create(ALARM_NAME, {
-    delayInMinutes: 1,
-    periodInMinutes: SYNC_INTERVAL_MINUTES,
-  });
-
+  // Sync is manual (dashboard buttons); only the queue drain watchdog remains.
   chrome.alarms.create('autoBlockWatchdog', {
     delayInMinutes: 1,
     periodInMinutes: 1,
   });
 
-  void doSync();
   void seedBundledKeywords();
 
   if (chrome.contextMenus) {
@@ -273,15 +280,16 @@ chrome.contextMenus.onClicked.addListener((info) => {
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === ALARM_NAME) {
-    void doSync();
-  } else if (alarm.name === 'autoBlockWatchdog') {
+  if (alarm.name === 'autoBlockWatchdog') {
     void feedCommunityHandles();
     void autoBlockManager.process();
   }
 });
 
 const MAX_BLOCK_RETRIES = 5;
+
+/** Failed block attempts are skipped by all auto paths for this long. */
+const FAILURE_RETRY_HOURS = 24;
 
 /** Buffer between a keyword trigger and its automatic block execution. */
 const AUTO_BLOCK_GRACE_MINUTES = 30;
@@ -301,6 +309,8 @@ class AutoBlockManager {
   eta: Record<string, number> = {};
   blockedUsersSet = new Set<string>();
   retryCounts = new Map<string, number>();
+  /** Last block-attempt failure per user (ms); auto paths skip these. */
+  failedAt: Record<string, number> = {};
   countToday = 0;
   batchCount = 0;
   lastDate = '';
@@ -336,6 +346,7 @@ class AutoBlockManager {
         'autoBlockPausedUntil',
         'autoBlockBatchCount',
         'blockedUsersOnX',
+        'blockFailedAt',
       ),
     );
 
@@ -352,9 +363,30 @@ class AutoBlockManager {
     this.pausedUntil = (items.autoBlockPausedUntil as number) ?? 0;
     this.batchCount = (items.autoBlockBatchCount as number) ?? 0;
     this.blockedUsersSet = new Set((items.blockedUsersOnX as string[]) ?? []);
+    this.failedAt = (items.blockFailedAt as Record<string, number>) ?? {};
     // The ledger is the source of truth (1.5.1): a user marked blocked must
     // never linger in the pending queue, even if older data left them there.
     await this.purgeBlockedFromQueue();
+  }
+
+  /** True when the last block attempt failed within the retry window. */
+  recentlyFailed(name: string): boolean {
+    const ts = this.failedAt[name];
+    return Boolean(ts) && Date.now() - ts < FAILURE_RETRY_HOURS * 60 * 60 * 1000;
+  }
+
+  /** Record a failed block attempt; also trims the table to the last 10k. */
+  markFailed(name: string): void {
+    this.failedAt[name] = Date.now();
+    const entries = Object.entries(this.failedAt).sort((a, b) => b[1] - a[1]).slice(0, 10000);
+    this.failedAt = Object.fromEntries(entries);
+  }
+
+  /** Clear the failure marker (block succeeded or user retries manually). */
+  clearFailed(name: string): void {
+    if (name in this.failedAt) {
+      delete this.failedAt[name];
+    }
   }
 
   /** Drop ledger members from the queue and persist when anything changed. */
@@ -388,6 +420,18 @@ class AutoBlockManager {
     await this.saveState({ autoBlockQueue: this.queue, autoBlockEta: this.eta });
   }
 
+  /** Batch queue removal (duplicate cleanup): one storage write per batch. */
+  async removeManyFromQueue(screenNames: string[]): Promise<void> {
+    const target = new Set(screenNames.map(extractCleanScreenName).filter(Boolean));
+    if (target.size === 0) return;
+    const removed = this.queue.filter((name) => target.has(name));
+    if (removed.length === 0) return;
+    this.queue = this.queue.filter((name) => !target.has(name));
+    for (const name of removed) delete this.eta[name];
+    await this.saveState({ autoBlockQueue: this.queue, autoBlockEta: this.eta });
+    void addLog('info', 'settings', `批量移除待拉黑队列 ${removed.length} 个（重复名单清理）`);
+  }
+
   async init(): Promise<void> {
     if (this.initialized) return;
     this.initPromise ??= (async () => {
@@ -418,7 +462,13 @@ class AutoBlockManager {
       const { whitelist } = await chrome.storage.local.get(getStorageDefaults('whitelist'));
       const whitelistSet = new Set((whitelist as string[]) ?? []);
       const candidates = users.filter(
-        (name) => !this.queue.includes(name) && !this.blockedUsersSet.has(name) && !whitelistSet.has(name),
+        (name) =>
+          !this.queue.includes(name) &&
+          !this.blockedUsersSet.has(name) &&
+          !whitelistSet.has(name) &&
+          // A user whose block attempt just failed must not be re-fed into
+          // the queue by every worker wake (that is the 78-stuck loop).
+          !this.recentlyFailed(name),
       );
       if (candidates.length === 0) return;
       void addLog('info', 'block', `迁移：${candidates.length} 个历史触发用户进入待拉黑`);
@@ -446,15 +496,26 @@ class AutoBlockManager {
         name &&
         /^[a-zA-Z0-9_]{1,15}$/v.test(name) &&
         !this.blockedUsersSet.has(name) &&
-        !whitelistSet.has(name),
+        !whitelistSet.has(name) &&
+        // Auto paths skip users whose last attempt failed within the retry
+        // window; manual confirmation (readyNow) is an explicit retry and
+        // always passes.
+        (options?.readyNow || !this.recentlyFailed(name)),
     );
     const readyAt = options?.readyNow ? Date.now() : Date.now() + Math.max(0, this.graceMinutes) * 60_000;
 
     // Fresh entries always get the full grace window — a leftover stale eta
-    // from a previous life must never let a new trigger bypass it.
+    // from a previous life must never let a new trigger bypass it. Manual
+    // confirmations (readyNow) jump the backlog line: they join the queue at
+    // the front so a multi-thousand backlog can't bury a user's explicit
+    // block request behind older entries.
     const freshNames = candidates.filter((name) => !this.queue.includes(name));
     if (freshNames.length > 0) {
-      this.queue.push(...freshNames);
+      if (options?.readyNow) {
+        this.queue.unshift(...freshNames);
+      } else {
+        this.queue.push(...freshNames);
+      }
       for (const name of freshNames) this.eta[name] = readyAt;
       const graceNote =
         options?.readyNow ? '立即执行' : `缓冲期 ${this.graceMinutes} 分钟，可在面板干预`;
@@ -566,6 +627,7 @@ class AutoBlockManager {
 
           if (outcome === 'success') {
             this.retryCounts.delete(currentItem);
+            this.clearFailed(currentItem);
             this.countToday++;
             this.batchCount++;
             // Ledger write happened inside handleBlockUser (markBlockedOnX) —
@@ -574,6 +636,7 @@ class AutoBlockManager {
               autoBlockQueue: this.queue,
               autoBlockToday: this.countToday,
               autoBlockBatchCount: this.batchCount,
+              blockFailedAt: this.failedAt,
             });
             void addLog('info', 'block', `已拉黑 @${currentItem}（今日第 ${this.countToday} 个）`);
           } else if (outcome === 'rate-limited') {
@@ -596,9 +659,10 @@ class AutoBlockManager {
                 `[X-Blocker] Auto block giving up on ${currentItem} after ${attempts} attempts:`,
                 failReason,
               );
-              void addLog('error', 'block', `放弃重试 @${currentItem}：${failReason}`);
+              void addLog('error', 'block', `放弃重试 @${currentItem}：${failReason}（24 小时内不再自动回填）`);
               this.retryCounts.delete(currentItem);
-              await this.saveState({ autoBlockQueue: this.queue });
+              this.markFailed(currentItem);
+              await this.saveState({ autoBlockQueue: this.queue, blockFailedAt: this.failedAt });
             } else {
               console.warn(
                 `[X-Blocker] Auto block transient failure for ${currentItem}, retry ${attempts}/${MAX_BLOCK_RETRIES}:`,
@@ -612,11 +676,12 @@ class AutoBlockManager {
             }
           } else {
             this.retryCounts.delete(currentItem);
-            // Expected permanent failures (e.g. account already deleted) are
-            // logged as warnings, not console errors.
+            // Expected permanent failures (e.g. account already deleted, no
+            // X session) are logged as warnings, not console errors.
             console.warn('[X-Blocker] Auto block skipped:', currentItem, failReason);
-            void addLog('warn', 'block', `跳过 @${currentItem}：${failReason}`);
-            await this.saveState({ autoBlockQueue: this.queue });
+            void addLog('warn', 'block', `跳过 @${currentItem}：${failReason}（24 小时内不再自动回填）`);
+            this.markFailed(currentItem);
+            await this.saveState({ autoBlockQueue: this.queue, blockFailedAt: this.failedAt });
           }
 
           if (this.queue.length > 0) {
@@ -636,10 +701,65 @@ class AutoBlockManager {
 
 const autoBlockManager = new AutoBlockManager();
 // Exported for tests (grace-window tuning); not part of the public surface.
-export { autoBlockManager, feedCommunityHandles };
-void autoBlockManager.init().then(() => {
-  void autoBlockManager.process();
-});
+export { autoBlockManager, feedCommunityHandles, normalizeStoredLists };
+
+/**
+ * One-shot local cleanup (idempotent, runs at every worker start): dedupe
+ * every user-facing list by clean name and drop raw/empty entries. The
+ * community list additionally drops handles already in the block ledger —
+ * those are the user's own round-tripped ids and can't be fed anyway (the
+ * ledger skips them), so the local copy mirrors the server's cleanest state
+ * minus the user's own blacklist.
+ */
+async function normalizeStoredLists(): Promise<void> {
+  try {
+    const items = await chrome.storage.local.get(
+      getStorageDefaults(
+        'blockedUsersOnX',
+        'autoBlockQueue',
+        'whitelist',
+        'communityHandles',
+        'communityDismissed',
+      ),
+    );
+    const cleanList = (value: unknown): string[] =>
+      Array.from(
+        new Set((Array.isArray(value) ? (value as string[]) : []).map(extractCleanScreenName).filter(Boolean)),
+      );
+    const next: Record<string, unknown> = {};
+    for (const key of ['blockedUsersOnX', 'autoBlockQueue', 'whitelist', 'communityDismissed'] as const) {
+      const normalized = cleanList(items[key]);
+      const prev = (items[key] as string[] | undefined) ?? [];
+      if (normalized.length !== prev.length || normalized.some((n, i) => n !== prev[i])) {
+        next[key] = normalized;
+      }
+    }
+    const ledger = new Set(cleanList(items.blockedUsersOnX));
+    const communityPrev = (items.communityHandles as string[] | undefined) ?? [];
+    const communityClean = cleanList(items.communityHandles).filter((name) => !ledger.has(name));
+    if (
+      communityClean.length !== communityPrev.length ||
+      communityClean.some((n, i) => n !== communityPrev[i])
+    ) {
+      next.communityHandles = communityClean;
+    }
+    if (Object.keys(next).length > 0) {
+      await chrome.storage.local.set(next);
+      const droppedCommunity = Math.max(0, communityPrev.length - communityClean.length);
+      if (droppedCommunity > 0) {
+        void addLog('info', 'sync', `社区名单本地清理：移除 ${droppedCommunity} 个（已在拉黑账本/重复/无效）`);
+      }
+    }
+  } catch (e) {
+    console.warn('[X-Blocker] list normalization skipped:', e);
+  }
+}
+
+void normalizeStoredLists().then(() =>
+  autoBlockManager.init().then(() => {
+    void autoBlockManager.process();
+  }),
+);
 
 async function blockAllHistoryUsers(usersToBlock: string[]): Promise<{ success: boolean; total: number; queued: number }> {
   const names = Array.isArray(usersToBlock) ? usersToBlock : [];
@@ -649,8 +769,18 @@ async function blockAllHistoryUsers(usersToBlock: string[]): Promise<{ success: 
 }
 
 chrome.runtime.onMessage.addListener((message: Record<string, unknown>, _sender, sendResponse) => {
-  if (message.action === 'syncNow') {
-    void doSync().then(sendResponse);
+  if (message.action === 'syncRules') {
+    void doSyncRules().then(sendResponse);
+    return true;
+  }
+  if (message.action === 'syncHandles') {
+    void doSyncHandles().then(sendResponse);
+    return true;
+  }
+  if (message.action === 'removeFromQueue') {
+    void autoBlockManager
+      .removeManyFromQueue((message.names as string[]) ?? [])
+      .then(() => sendResponse({ success: true }));
     return true;
   }
   if (message.action === 'blockUserOnX') {
@@ -703,12 +833,20 @@ chrome.runtime.onMessage.addListener((message: Record<string, unknown>, _sender,
         inMemoryBlockedCount = 0;
         globalSpamCache.clear();
         await saveHistoryState();
+        void addLog('warn', 'settings', '用户手动清空屏蔽历史（全部记录与计数已重置）');
       })
       .then(() => sendResponse({ success: true }));
     return true;
   }
   if (message.action === 'removeSpamRecord') {
     void handleRemoveSpamRecord(String(message.id ?? ''), message.time as number | undefined).then(sendResponse);
+    return true;
+  }
+  if (message.action === 'bulkRemoveRecords') {
+    void bulkRemoveRecords(
+      (message.ids as Array<{ id: string; time: number }>) ?? [],
+      message.scope === 'community' ? 'community' : undefined,
+    ).then(sendResponse);
     return true;
   }
   return false;
@@ -738,6 +876,30 @@ async function notifyContentScripts(message: Record<string, unknown>): Promise<v
  * `blockedUsersOnX` is the ledger that marks a user as blocked, and the UI
  * renders blocked state from it. Records stay put so nothing "drifts".
  */
+/**
+ * Blocking or unblocking a community member is a permanent opt-out: the
+ * handle lives in the shared handles.txt (possibly uploaded by us), so the
+ * cloud feeder would otherwise re-add it to the pending queue on the next
+ * sync or watchdog wake. Non-community handles are already protected by the
+ * ledger alone. Clean-name compared so a raw cloud form never round-trips.
+ */
+async function optOutCommunityHandle(cleanName: string): Promise<void> {
+  if (!cleanName) return;
+  const { communityHandles, communityDismissed } = await chrome.storage.local.get(
+    getStorageDefaults('communityHandles', 'communityDismissed'),
+  );
+  const community = new Set(
+    ((communityHandles as string[]) ?? []).map(extractCleanScreenName).filter(Boolean),
+  );
+  if (!community.has(cleanName)) return;
+  const dismissed = new Set((communityDismissed as string[]) ?? []);
+  if (dismissed.has(cleanName)) return;
+  dismissed.add(cleanName);
+  await chrome.storage.local.set({
+    communityDismissed: Array.from(dismissed).slice(-100000),
+  });
+}
+
 async function markBlockedOnX(cleanName: string): Promise<void> {
   const stored = (
     await chrome.storage.local.get(getStorageDefaults('blockedUsersOnX', 'blockedAt'))
@@ -759,6 +921,11 @@ async function markBlockedOnX(cleanName: string): Promise<void> {
   }
   // Ledger write implies queue exit: a blocked user is no longer "pending".
   await autoBlockManager.removeFromQueue(cleanName);
+  // A successful block clears any previous failure marker.
+  autoBlockManager.clearFailed(cleanName);
+  await chrome.storage.local.set({ blockFailedAt: autoBlockManager.failedAt });
+  // Blocked community members never get re-fed — not even after an unblock.
+  await optOutCommunityHandle(cleanName);
 }
 
 async function markUnblockedOnX(cleanName: string): Promise<void> {
@@ -772,6 +939,9 @@ async function markUnblockedOnX(cleanName: string): Promise<void> {
     blockedAt,
   });
   autoBlockManager.blockedUsersSet.delete(cleanName);
+  // Unblocking is not an opt-in for the cloud feeder: the shared handle
+  // would otherwise re-enter the pending queue on the next sync.
+  await optOutCommunityHandle(cleanName);
 }
 
 function handleRemoveSpamRecord(id: string, time?: number): Promise<{ success: boolean }> {
@@ -835,32 +1005,144 @@ function handleRemoveSpamRecord(id: string, time?: number): Promise<{ success: b
     if (removedUsers.length > 0) {
       // Deleting a community-sourced record is a permanent opt-out: without
       // this the feeder would re-add the handle on the next wake. Runs for
-      // batch-window deletes too (where removedCount is 0).
-      void (async () => {
-        const removedCommunity = removedUsers.filter((name) =>
+      // batch-window deletes too (where removedCount is 0). The record id
+      // itself carries the community: prefix, so the check must not depend on
+      // the in-memory source set — a restarted worker would have lost it and
+      // the dismissal would never be written (the handle gets re-fed).
+      const removingCommunityRecord =
+        Boolean(id) && String(id).startsWith(COMMUNITY_HISTORY_PREFIX);
+      const removedCommunity = removedUsers.filter(
+        (name) =>
+          removingCommunityRecord ||
           communitySourceIds.has(`${COMMUNITY_HISTORY_PREFIX}${name}`),
-        );
-        if (removedCommunity.length === 0) return;
-        const items = await chrome.storage.local.get(getStorageDefaults('communityDismissed'));
-        const dismissed = new Set((items.communityDismissed as string[]) ?? []);
-        let changed = false;
-        for (const name of removedCommunity) {
-          if (!dismissed.has(name)) {
-            dismissed.add(name);
-            changed = true;
+      );
+      if (removedCommunity.length > 0) {
+        void (async () => {
+          const items = await chrome.storage.local.get(getStorageDefaults('communityDismissed'));
+          const dismissed = new Set((items.communityDismissed as string[]) ?? []);
+          let changed = false;
+          for (const name of removedCommunity) {
+            if (!dismissed.has(name)) {
+              dismissed.add(name);
+              changed = true;
+            }
           }
-        }
-        if (changed) {
-          await chrome.storage.local.set({ communityDismissed: Array.from(dismissed).slice(-100000) });
-        }
-      })();
+          if (changed) {
+            await chrome.storage.local.set({ communityDismissed: Array.from(dismissed).slice(-100000) });
+          }
+        })();
+      }
       for (const name of removedUsers) {
         if (!remainingUsers.has(name)) {
           void autoBlockManager.removeFromQueue(name);
         }
       }
+      const communityNote = removedCommunity.length > 0 ? `，${removedCommunity.length} 人社区忽略` : '';
+      void addLog('info', 'block', `删除触发记录 ${removedCount} 条（${removedUsers.length} 人退出待拉黑${communityNote}）`);
     }
     return { success: true };
+  });
+}
+
+/**
+ * One-message bulk deletion for the trigger-records pages: an explicit id
+ * list (toolbar select-all) or `scope: 'community'` (all synthetic 社区共享
+ * records at once — the multi-thousand backlog from past feeding rounds).
+ * Everything the single-record path does (queue exit, community opt-out,
+ * counters, log) happens here in a handful of storage writes instead of one
+ * message per record.
+ */
+async function bulkRemoveRecords(
+  ids: Array<{ id: string; time: number }>,
+  scope?: 'community',
+): Promise<{ success: boolean; removed: number; users: number; communityIgnored: number }> {
+  const idSet = new Set(ids.map(({ id, time }) => `${id}:${String(time ?? 0)}`));
+  const want = (item: SpamItem): boolean => {
+    if (scope === 'community') return String(item.id ?? '').startsWith(COMMUNITY_HISTORY_PREFIX);
+    return idSet.has(`${item.id}:${String(item.time ?? 0)}`);
+  };
+
+  // Rows still in the pending write batch count as removed too.
+  let batchRemovedItems: SpamItem[] = [];
+  if (pendingSpamBatch.length > 0) {
+    batchRemovedItems = pendingSpamBatch.filter(want);
+    pendingSpamBatch = pendingSpamBatch.filter((item) => !want(item));
+  }
+
+  return storageQueue.enqueue(async () => {
+    await ensureHistoryInitialized();
+    const originalLength = (inMemoryHistory ?? []).length;
+    const removedItems = (inMemoryHistory ?? []).filter(want);
+    const removedIds = removedItems.map((item) => item?.id).filter(Boolean) as string[];
+    for (const id of removedIds) {
+      globalSpamCache.delete(id);
+    }
+    // One array message instead of one message per record (thousands).
+    if (removedIds.length > 0) {
+      void notifyContentScripts({ action: 'removeLocalSentIds', ids: removedIds });
+    }
+    inMemoryHistory = (inMemoryHistory ?? []).filter((item) => !want(item));
+    const historyRemoved = originalLength - (inMemoryHistory ?? []).length;
+    const totalRemoved = historyRemoved + batchRemovedItems.length;
+    if (historyRemoved > 0) {
+      inMemoryBlockedCount = Math.max(0, (inMemoryBlockedCount ?? 0) - historyRemoved);
+      await saveHistoryState();
+    }
+
+    const removedUsers = Array.from(
+      new Set(
+        [...removedItems, ...batchRemovedItems]
+          .map((item) => extractCleanScreenName(item.user ?? ''))
+          .filter(Boolean),
+      ),
+    );
+    const communityNames = new Set(
+      [...removedItems, ...batchRemovedItems]
+        .filter((item) => String(item.id ?? '').startsWith(COMMUNITY_HISTORY_PREFIX))
+        .map((item) => extractCleanScreenName(item.user ?? ''))
+        .filter(Boolean),
+    );
+
+    const remainingUsers = new Set(
+      [...(inMemoryHistory ?? []), ...pendingSpamBatch]
+        .map((item) => extractCleanScreenName(item.user ?? ''))
+        .filter(Boolean),
+    );
+    const queueDrop = removedUsers.filter((name) => !remainingUsers.has(name));
+    if (queueDrop.length > 0) {
+      await autoBlockManager.init();
+      await autoBlockManager.removeManyFromQueue(queueDrop);
+    }
+
+    // Community-sourced deletions are permanent opt-outs — without this the
+    // feeder would re-add every handle on the next sync/wake.
+    if (communityNames.size > 0) {
+      const items = await chrome.storage.local.get(getStorageDefaults('communityDismissed'));
+      const dismissed = new Set((items.communityDismissed as string[]) ?? []);
+      let changed = false;
+      for (const name of communityNames) {
+        if (!dismissed.has(name)) {
+          dismissed.add(name);
+          changed = true;
+        }
+      }
+      if (changed) {
+        await chrome.storage.local.set({ communityDismissed: Array.from(dismissed).slice(-100000) });
+      }
+    }
+
+    if (totalRemoved > 0) {
+      const note =
+        communityNames.size > 0 ? `，${communityNames.size} 人社区忽略` : '';
+      void addLog(
+        'info',
+        'block',
+        scope === 'community'
+          ? `一键清理社区共享记录 ${totalRemoved} 条（${removedUsers.length} 人退出待拉黑${note}）`
+          : `批量删除触发记录 ${totalRemoved} 条（${removedUsers.length} 人${note}）`,
+      );
+    }
+    return { success: true, removed: totalRemoved, users: removedUsers.length, communityIgnored: communityNames.size };
   });
 }
 
@@ -930,13 +1212,31 @@ async function feedCommunityHandles(): Promise<void> {
   console.log('DBG feeder start');
   try {
     const stored = await chrome.storage.local.get(
-      getStorageDefaults('communityHandles', 'communityDismissed', 'blockedUsersOnX', 'whitelist'),
+      getStorageDefaults(
+        'communityHandles',
+        'communityDismissed',
+        'blockedUsersOnX',
+        'whitelist',
+        'blockFailedAt',
+      ),
     );
-    const community = new Set((stored.communityHandles as string[]) ?? []);
+    // Normalize before comparing: the shared file may carry raw forms
+    // (@Foo, mixed case), while ledger / whitelist / dismissed / queue all
+    // store clean names — a raw form would otherwise slip past every guard.
+    const community = new Set(
+      ((stored.communityHandles as string[]) ?? [])
+        .map(extractCleanScreenName)
+        .filter(Boolean),
+    );
     if (community.size === 0) return;
     const dismissed = new Set((stored.communityDismissed as string[]) ?? []);
     const ledger = new Set((stored.blockedUsersOnX as string[]) ?? []);
     const whitelist = new Set((stored.whitelist as string[]) ?? []);
+    const failedAt = new Set(
+      Object.entries((stored.blockFailedAt as Record<string, number>) ?? {})
+        .filter(([, ts]) => Date.now() - ts < FAILURE_RETRY_HOURS * 60 * 60 * 1000)
+        .map(([name]) => name),
+    );
 
     const { autoBlockQueue: queue } = await chrome.storage.local.get(
       getStorageDefaults('autoBlockQueue'),
@@ -951,7 +1251,15 @@ async function feedCommunityHandles(): Promise<void> {
     for (const name of community) {
       if (feed.length >= COMMUNITY_FEED_BATCH) break;
       if (inFlight + feed.length >= COMMUNITY_QUEUE_TARGET) break;
-      if (ledger.has(name) || whitelist.has(name) || dismissed.has(name) || queueSet.has(name)) continue;
+      if (
+        ledger.has(name) ||
+        whitelist.has(name) ||
+        dismissed.has(name) ||
+        queueSet.has(name) ||
+        failedAt.has(name)
+      ) {
+        continue;
+      }
       feed.push(name);
     }
     if (feed.length === 0) return;
@@ -1064,8 +1372,11 @@ function base64ToUtf8(base64: string): string {
 async function shareKeywordsToProject(): Promise<{ success: boolean; total?: number; reason?: string; detail?: string }> {
   try {
     const stored = await chrome.storage.local.get(
-      getStorageDefaults('githubToken', 'cloudOwnerRepo', 'cloudKeywords', 'keywords', 'disabledCloudKeywords', 'cloudEnabled'),
+      getStorageDefaults('githubToken', 'cloudOwnerRepo', 'cloudKeywords', 'keywords', 'disabledCloudKeywords', 'cloudEnabled', 'shareEnabled'),
     );
+    if (stored.shareEnabled === false) {
+      return { success: false, reason: '共享推送未启用（设置 → 同步与共享 → 启用共享推送）' };
+    }
     const token = stored.githubToken as string;
     if (!token) {
       return { success: false, reason: '请先在设置中填写 GitHub Token' };
@@ -1128,8 +1439,11 @@ async function shareKeywordsToProject(): Promise<{ success: boolean; total?: num
 async function shareHandlesToProject(): Promise<{ success: boolean; total?: number; reason?: string; detail?: string; added?: number; localCount?: number; cloudCount?: number }> {
   try {
     const stored = await chrome.storage.local.get(
-      getStorageDefaults('githubToken', 'cloudOwnerRepo', 'blockedUsersOnX'),
+      getStorageDefaults('githubToken', 'cloudOwnerRepo', 'blockedUsersOnX', 'shareEnabled'),
     );
+    if (stored.shareEnabled === false) {
+      return { success: false, reason: '共享推送未启用（设置 → 同步与共享 → 启用共享推送）' };
+    }
     const token = stored.githubToken as string;
     if (!token) {
       return { success: false, reason: '请先在设置中填写 GitHub Token' };
@@ -1231,7 +1545,9 @@ async function handleBlockUser(screenName: string, isBlock: boolean): Promise<Bl
       name: 'ct0',
     });
     if (!cookie) {
-      return { success: false, reason: '无法获取身份凭证，请确保已登录 X' };
+      // Permanent, not transient: retrying without an X session can never
+      // succeed, and every retry only wastes the daily/batch budget.
+      return { success: false, reason: '无法获取身份凭证，请确保已登录 X（打开一次 X 页面后重试）', permanent: true };
     }
 
     const endpoint = isBlock ? 'create.json' : 'destroy.json';

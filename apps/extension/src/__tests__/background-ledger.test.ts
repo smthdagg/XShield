@@ -17,17 +17,28 @@
  * auto-block queue drains through the real AutoBlockManager.process().
  */
 import { describe, expect, it, vi } from 'vitest';
+import { parseScreenNames, isValidScreenName } from '../store/blockerStorage';
 
 const storageData: Record<string, unknown> = {};
 const messageListeners: Array<
   (message: Record<string, unknown>, sender: unknown, sendResponse: (res: unknown) => void) => boolean | void
 > = [];
 
+/**
+ * Storage write guard: an auto-block drain loop can outlive its test (its
+ * backoff sleeps keep firing after the test finished) and would otherwise
+ * leak stale entries into the next test's storage. Writes from a worker of
+ * a previous generation are dropped.
+ */
+let storageGeneration = 0;
+const staleWrites: Array<Record<string, unknown>> = [];
+
 function resetStorage(): void {
   for (const key of Object.keys(storageData)) delete storageData[key];
 }
 
 function makeChromeMock() {
+  const myGen = storageGeneration;
   return {
     runtime: {
       id: 'test',
@@ -58,13 +69,19 @@ function makeChromeMock() {
           return out;
         }),
         set: vi.fn(async (items: Record<string, unknown>) => {
+          if (myGen !== storageGeneration) {
+            staleWrites.push(items);
+            return;
+          }
           Object.assign(storageData, items);
         }),
       },
       onChanged: { addListener: vi.fn(), removeListener: vi.fn() },
     },
     alarms: { create: vi.fn(), onAlarm: { addListener: vi.fn() } },
-    cookies: { get: vi.fn(async () => ({ value: 'ct0-token' })) },
+    cookies: {
+      get: vi.fn(async (): Promise<{ value?: string } | undefined> => ({ value: 'ct0-token' })),
+    },
     tabs: { query: vi.fn(async () => []), sendMessage: vi.fn(async () => {}) },
     contextMenus: {
       removeAll: vi.fn((cb?: () => void) => cb?.()),
@@ -109,6 +126,7 @@ async function bootstrap(seed?: Record<string, unknown>, fetchImpl?: FetchImpl):
   vi.unstubAllGlobals();
   resetStorage();
   messageListeners.length = 0;
+  storageGeneration++;
   chromeMock = makeChromeMock();
   vi.stubGlobal('chrome', chromeMock);
   vi.stubGlobal('fetch', fetchImpl ?? okFetch());
@@ -553,6 +571,40 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
     expect(storageData.autoBlockQueue).toEqual([]);
   });
 
+  it('blocking then unblocking a community handle never re-feeds it (self-shared ids round-trip)', async () => {
+    await bootstrap({
+      // Raw forms normalize to one clean handle; the guard must dedupe them.
+      communityHandles: ['loop1', '@loop1'],
+      communityDismissed: [],
+      whitelist: [],
+      autoBlockGraceMinutes: 30,
+    });
+    const bg = await import('../background/index');
+    await bg.feedCommunityHandles();
+    await vi.waitFor(
+      () => expect(storageData.autoBlockQueue).toContain('loop1'),
+      { timeout: 5000, interval: 25 },
+    );
+    // Block on X — ledger write AND permanent community opt-out.
+    const blockRes = (await dispatch({ action: 'blockUserOnX', screenName: 'loop1' })) as {
+      success?: boolean;
+    };
+    expect(blockRes?.success).toBe(true);
+    await vi.waitFor(
+      () => expect((storageData.communityDismissed as string[])).toContain('loop1'),
+      { timeout: 5000, interval: 25 },
+    );
+    // Unblock: ledger drops it, but the dismissal keeps the feeder away.
+    const unblockRes = (await dispatch({ action: 'unblockUserOnX', screenName: 'loop1' })) as {
+      success?: boolean;
+    };
+    expect(unblockRes?.success).toBe(true);
+    await bg.feedCommunityHandles();
+    await new Promise((r) => setTimeout(r, 200));
+    expect(storageData.autoBlockQueue).toEqual([]);
+    expect(storageData.blockedUsersOnX).toEqual([]);
+  });
+
   it('whitelist chokepoint: blockUserOnX refuses whitelisted users', async () => {
     await bootstrap({ whitelist: ['pacifist1'] });
     const res = (await dispatch({ action: 'blockUserOnX', screenName: 'pacifist1' })) as {
@@ -668,5 +720,216 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
     expect(
       (storageData.blockedHistory as Array<{ id: string }>).some((item) => item.id === 'tweet-6'),
     ).toBe(true);
+  });
+
+  it('normalizeStoredLists dedupes and cleans every user-facing list', async () => {
+    const farFuture = Date.now() + 60 * 60 * 1000;
+    await bootstrap({
+      blockedUsersOnX: ['ledger1', 'ledger1', '@Ledger2', 'ledger2', '', '!bad'],
+      // Queue names must not overlap the ledger — init purges ledger
+      // members from the queue by design. Future ETAs keep the drain idle.
+      autoBlockQueue: ['dup1', 'dup1', 'queued1'],
+      autoBlockEta: { dup1: farFuture, queued1: farFuture },
+      whitelist: ['wl1', 'wl1', 'WL2'],
+      // The community list must also drop handles already in the local
+      // blacklist (self-shared ids that round-tripped through handles.txt).
+      communityHandles: ['@c1', 'c1', 'c2', 'ledger1', 'ledger2'],
+      communityDismissed: ['d1', 'd1', 'd1'],
+    });
+    const bg = await import('../background/index');
+    await bg.normalizeStoredLists();
+    expect(storageData.blockedUsersOnX).toEqual(['ledger1', 'ledger2']);
+    expect(storageData.autoBlockQueue).toEqual(['dup1', 'queued1']);
+    expect(storageData.whitelist).toEqual(['wl1', 'wl2']);
+    expect(storageData.communityHandles).toEqual(['c1', 'c2']);
+    expect(storageData.communityDismissed).toEqual(['d1']);
+  });
+
+  it('community feed never re-queues ledger members (already blocked)', async () => {
+    await bootstrap({
+      communityHandles: ['skip1', 'skip2'],
+      blockedUsersOnX: ['skip1'],
+      communityDismissed: [],
+      whitelist: [],
+      autoBlockGraceMinutes: 30,
+    });
+    const bg = await import('../background/index');
+    await bg.feedCommunityHandles();
+    await new Promise((r) => setTimeout(r, 200));
+    expect(storageData.autoBlockQueue).toEqual(['skip2']);
+    // No synthetic 社区共享 record for the already-blocked handle either.
+    const hist = (storageData.blockedHistory as Array<{ id: string }>) ?? [];
+    expect(hist.some((it) => it.id === 'community:skip1')).toBe(false);
+  });
+
+  it('removeFromQueue batch action drops the named entries (duplicate cleanup)', async () => {
+    const farFuture = Date.now() + 60 * 60 * 1000;
+    await bootstrap({
+      autoBlockQueue: ['a1', 'a2', 'b1'],
+      autoBlockEta: { a1: farFuture, a2: farFuture, b1: farFuture },
+      autoBlockGraceMinutes: 30,
+    });
+    const res = (await dispatch({ action: 'removeFromQueue', names: ['a1', 'a2', '@missing'] })) as {
+      success?: boolean;
+    };
+    expect(res?.success).toBe(true);
+    expect(storageData.autoBlockQueue).toEqual(['b1']);
+    expect(storageData.autoBlockEta).toEqual({ b1: farFuture });
+    // Every cleanup action is written to the local log.
+    await vi.waitFor(
+      () =>
+        expect(
+          ((storageData.xshieldLogs as Array<{ message: string }>) ?? []).some((l) =>
+            l.message.includes('重复名单清理'),
+          ),
+        ).toBe(true),
+      { timeout: 5000, interval: 25 },
+    );
+  });
+
+  it('parseScreenNames keeps only strict handles and audits skipped lines (format check)', () => {
+    expect(isValidScreenName('abc123')).toBe(true);
+    expect(isValidScreenName('@abc123')).toBe(false);
+    expect(isValidScreenName('https://x.com/foo/status/1')).toBe(false);
+
+    const text = [
+      'spammer1',
+      '@Spammer2', // @ prefix is cleaned, kept as spammer2
+      '  dup1  ',
+      'dup1', // duplicate -> deduped
+      'https://x.com/someone/status/123', // URL -> rejected
+      '这是一个中文账号名', // CJK -> rejected
+      '', // empty line -> ignored, not counted as skipped
+      'ab', // 2 chars is valid
+      'a!b', // invalid char -> rejected
+    ].join('\n');
+    const { handles, skipped } = parseScreenNames(text);
+    expect(handles).toEqual(['spammer1', 'spammer2', 'dup1', 'ab']);
+    expect(skipped.length).toBe(3);
+  });
+
+  it('bulkRemoveRecords scope=community purges all synthetic records in one message', async () => {
+    const farFuture = Date.now() + 60 * 60 * 1000;
+    await bootstrap({
+      blockedHistory: [
+        record('community:spam1', 'spam1', true),
+        record('community:spam2', 'spam2', true),
+        record('tweet-9', 'realtrigger', true),
+      ],
+      autoBlockQueue: ['spam1', 'spam2', 'realtrigger'],
+      autoBlockEta: { spam1: farFuture, spam2: farFuture, realtrigger: farFuture },
+      communityDismissed: [],
+      autoBlockGraceMinutes: 30,
+    });
+    const res = (await dispatch({ action: 'bulkRemoveRecords', scope: 'community' })) as {
+      success?: boolean;
+      removed?: number;
+      users?: number;
+    };
+    expect(res?.success).toBe(true);
+    expect(res?.removed).toBe(2);
+    expect(res?.users).toBe(2);
+    // Normal record + its queue entry survive; community ones are gone from
+    // both history and queue, and opted out of future feeding.
+    await vi.waitFor(
+      () => {
+        const hist = storageData.blockedHistory as Array<{ id: string }>;
+        expect(hist.some((it) => it.id.startsWith('community:'))).toBe(false);
+        expect(hist.some((it) => it.id === 'tweet-9')).toBe(true);
+        expect(storageData.autoBlockQueue).toEqual(['realtrigger']);
+        expect(storageData.communityDismissed).toEqual(['spam1', 'spam2']);
+      },
+      { timeout: 5000, interval: 25 },
+    );
+  });
+
+  it('bulkRemoveRecords explicit ids deletes exactly those records', async () => {
+    await bootstrap({
+      blockedHistory: [record('r1', 'user1', true), record('r2', 'user2', true), record('r3', 'user3', true)],
+      autoBlockQueue: ['user1', 'user2', 'user3'],
+      autoBlockEta: { user1: Date.now() + 3_600_000, user2: Date.now() + 3_600_000, user3: Date.now() + 3_600_000 },
+      autoBlockGraceMinutes: 30,
+    });
+    const hist0 = storageData.blockedHistory as Array<{ id: string; time: number }>;
+    const res = (await dispatch({
+      action: 'bulkRemoveRecords',
+      ids: hist0.slice(0, 2).map(({ id, time }) => ({ id, time })),
+    })) as { success?: boolean; removed?: number };
+    expect(res?.success).toBe(true);
+    expect(res?.removed).toBe(2);
+    const hist = storageData.blockedHistory as Array<{ id: string }>;
+    expect(hist.map((it) => it.id)).toEqual(['r3']);
+    expect(storageData.autoBlockQueue).toEqual(['user3']);
+  });
+
+  it('share gate: uploads are refused when shareEnabled is off', async () => {
+    await bootstrap({ shareEnabled: false, githubToken: 'tok', blockedUsersOnX: ['u1'] });
+    const kw = (await dispatch({ action: 'shareKeywords' })) as { success?: boolean; reason?: string };
+    expect(kw?.success).toBe(false);
+    expect(kw?.reason ?? '').toContain('未启用');
+    const hd = (await dispatch({ action: 'shareHandles' })) as { success?: boolean; reason?: string };
+    expect(hd?.success).toBe(false);
+    expect(hd?.reason ?? '').toContain('未启用');
+  });
+
+  it('manual confirmation (readyNow) joins the queue at the front, not the backlog', async () => {
+    const farFuture = Date.now() + 60 * 60 * 1000;
+    await bootstrap({
+      autoBlockQueue: ['old1', 'old2'],
+      autoBlockEta: { old1: farFuture, old2: farFuture },
+      blockedUsersOnX: [],
+      whitelist: [],
+      autoBlockGraceMinutes: 30,
+    });
+    const bg = await import('../background/index');
+    // Freeze the drain so the queue contents can be asserted (readyNow
+    // entries are immediately eligible and would be consumed otherwise).
+    bg.autoBlockManager.dailyLimit = 0;
+    const res = (await dispatch({
+      action: 'blockAllHistoryUsers',
+      users: ['new1', 'new2'],
+    })) as { success?: boolean; queued?: number };
+    expect(res?.success).toBe(true);
+    // Manual picks sit ahead of the pre-existing backlog.
+    expect(storageData.autoBlockQueue).toEqual(['new1', 'new2', 'old1', 'old2']);
+  });
+
+  it('recently failed users are skipped by auto paths but manual retry passes', async () => {
+    // User already failed 10 minutes ago -> backfill must not re-add.
+    const recentFail = Date.now() - 10 * 60 * 1000;
+    await bootstrap({
+      blockedHistory: [record('tweet-f1', 'faileduser', true)],
+      blockFailedAt: { faileduser: recentFail },
+      autoBlockQueue: [],
+      autoBlockEta: {},
+      blockedUsersOnX: [],
+      whitelist: [],
+      autoBlockGraceMinutes: 30,
+    });
+    const bg = await import('../background/index');
+    await bg.autoBlockManager.init();
+    await bg.autoBlockManager.backfillFromHistory();
+    await new Promise((r) => setTimeout(r, 200));
+    expect(storageData.autoBlockQueue).toEqual([]);
+    // Manual confirmation (readyNow) is an explicit retry and passes.
+    const res = (await dispatch({
+      action: 'blockAllHistoryUsers',
+      users: ['faileduser'],
+    })) as { success?: boolean };
+    expect(res?.success).toBe(true);
+    expect(storageData.autoBlockQueue).toEqual(['faileduser']);
+  });
+
+  it('block without an X session is permanent (no retries, explicit reason)', async () => {
+    await bootstrap({ autoBlockGraceMinutes: 30 });
+    chromeMock.cookies.get.mockImplementationOnce(() => Promise.resolve(undefined));
+    const res = (await dispatch({ action: 'blockUserOnX', screenName: 'nologin1' })) as {
+      success?: boolean;
+      permanent?: boolean;
+      reason?: string;
+    };
+    expect(res?.success).toBe(false);
+    expect(res?.permanent).toBe(true);
+    expect(res?.reason ?? '').toContain('身份凭证');
   });
 });

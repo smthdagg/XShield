@@ -128,9 +128,9 @@ may lag — purge at [purge.jsdelivr.net](https://www.jsdelivr.com/tools/purge).
 
 ## 7. Library maintenance (project owner)
 
-- Content words: `keywords.txt` (561-line cleaned set: Chinese phrases + brand words + `t.cn`/`Gate Card` + 7 structural regexes)
+- Content words: `keywords.txt` (cleaned set: Chinese phrases + brand words + `t.cn`/`Gate Card` + 7 structural regexes)
 - Shared blocklist: `handles.txt` (accumulated via the share button)
-- Commit directly on GitHub, then purge the CDN at [purge.jsdelivr.net](https://www.jsdelivr.com/tools/purge); users pick it up on their next sync
+- Commit directly on GitHub, then purge the CDN at [purge.jsdelivr.net](https://www.jsdelivr.com/tools/purge); users pick it up on their next manual sync (Sync rules / Sync blacklist)
 
 ---
 

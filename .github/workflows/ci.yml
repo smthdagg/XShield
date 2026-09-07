@@ -15,7 +15,8 @@ jobs:
           package-manager: pnpm
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # jsdom 30 requires Node >= 22.6 (node:webidl.markAsUncloneable).
+          node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Lint

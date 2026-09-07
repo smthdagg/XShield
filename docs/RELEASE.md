@@ -30,3 +30,4 @@
 6. **构建产物**：`pnpm build` 后确认 `apps/extension/dist/manifest.json` 版本号与本次一致。
 7. **提交**：commit message 以版本号结尾（如 `feat: ... (1.1.19)`）；推送 `main`。
 8. **打标签 + 发布**：`git tag v1.1.19 && git push origin v1.1.19`，`gh release create v1.1.19 --generate-notes`。
+9. **上传可安装包**（dist 不入 git）：`cd apps/extension/dist && zip -r ../../xshield-vX.Y.Z.zip .`，`gh release upload vX.Y.Z xshield-vX.Y.Z.zip`——Release 页提供解压即用的安装包。

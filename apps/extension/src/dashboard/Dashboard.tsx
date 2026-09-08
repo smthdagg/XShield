@@ -10,6 +10,7 @@
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
+  Activity,
   Ban,
   CheckCircle2,
   Download,
@@ -83,9 +84,23 @@ const DEFAULTS: Record<string, unknown> = {
   syncError: '',
   language: 'system' as string,
   xshieldLogs: [] as XLogEntry[],
+  statsTotalBlocks: 0,
+  statsTriggers: 0,
+  statsBlocksByDay: {} as Record<string, number>,
+  statsMigrated: false,
+  currentUsername: '',
+  currentUserSeenAt: 0,
 };
 
-function DataPanel({ title, meta, children }: { title: string; meta?: string; children: ReactNode }) {
+function DataPanel({
+  title,
+  meta,
+  children,
+}: {
+  title: string;
+  meta?: string;
+  children: ReactNode;
+}) {
   return (
     <section className="data-panel">
       <header className="panel-header">
@@ -167,7 +182,10 @@ function send(message: Record<string, unknown>): Promise<unknown> {
 const VIEW_IDS: ViewId[] = ['triggered', 'blockedLog', 'whitelist', 'rules', 'logs', 'settings'];
 const LAST_VIEW_KEY = 'xshieldLastView';
 
-export interface BlockedEntry { name: string; at: number }
+export interface BlockedEntry {
+  name: string;
+  at: number;
+}
 
 /** Pure filter+pagination for the blocked-users database view (exported for tests). */
 export function filterAndPageBlocked(
@@ -248,9 +266,18 @@ export default function Dashboard() {
     void chrome.storage.local.set({ [key]: value });
   };
 
-  const blockedHistory = useMemo(() => (state.blockedHistory as SpamRecord[]) ?? [], [state.blockedHistory]);
-  const autoBlockQueue = useMemo(() => (state.autoBlockQueue as string[]) ?? [], [state.autoBlockQueue]);
-  const blockedUsersOnX = useMemo(() => (state.blockedUsersOnX as string[]) ?? [], [state.blockedUsersOnX]);
+  const blockedHistory = useMemo(
+    () => (state.blockedHistory as SpamRecord[]) ?? [],
+    [state.blockedHistory],
+  );
+  const autoBlockQueue = useMemo(
+    () => (state.autoBlockQueue as string[]) ?? [],
+    [state.autoBlockQueue],
+  );
+  const blockedUsersOnX = useMemo(
+    () => (state.blockedUsersOnX as string[]) ?? [],
+    [state.blockedUsersOnX],
+  );
   // Queue entries that duplicate the ledger can never be re-blocked — show
   // them as pending-delete duplicates, separate from the real pending queue.
   // (The background also auto-purges them, so this section is best-effort.)
@@ -264,10 +291,16 @@ export default function Dashboard() {
     [autoBlockQueue, blockedUsersOnX],
   );
   const whitelist = useMemo(() => (state.whitelist as string[]) ?? [], [state.whitelist]);
-  const cloudKeywords = useMemo(() => parseKeywords(String(state.cloudKeywords ?? '')), [state.cloudKeywords]);
+  const cloudKeywords = useMemo(
+    () => parseKeywords(String(state.cloudKeywords ?? '')),
+    [state.cloudKeywords],
+  );
   // Rules and blacklist share one repo source (mirrors the settings hint).
   const cloudRepo = String(state.cloudOwnerRepo ?? '').trim() || DEFAULT_CLOUD_OWNER_REPO;
-  const customKeywords = useMemo(() => parseKeywords(String(state.keywords ?? '')), [state.keywords]);
+  const customKeywords = useMemo(
+    () => parseKeywords(String(state.keywords ?? '')),
+    [state.keywords],
+  );
 
   // ---- actions ----
   const triggerSyncRules = (): void => {
@@ -281,7 +314,11 @@ export default function Dashboard() {
   const triggerSyncHandles = (): void => {
     setSyncingHandles(true);
     void send({ action: 'syncHandles' })
-      .then((res) => setStatus((res as { success?: boolean })?.success ? t.syncBlacklistOk : t.syncBlacklistFail))
+      .then((res) =>
+        setStatus(
+          (res as { success?: boolean })?.success ? t.syncBlacklistOk : t.syncBlacklistFail,
+        ),
+      )
       .catch(() => setStatus(t.syncBlacklistFail))
       .finally(() => setSyncingHandles(false));
   };
@@ -300,7 +337,7 @@ export default function Dashboard() {
     setStatus(`正在拉黑 @${clean}…`);
     void send({ action: 'blockUserOnX', screenName: clean }).then((res) => {
       const result = res as { success?: boolean; reason?: string };
-      setStatus(result?.success ? `已拉黑 @${clean}` : result?.reason ?? '拉黑失败');
+      setStatus(result?.success ? `已拉黑 @${clean}` : (result?.reason ?? '拉黑失败'));
     });
   };
 
@@ -320,7 +357,7 @@ export default function Dashboard() {
   const unblockOne = (handle: string): void => {
     void send({ action: 'unblockUserOnX', screenName: handle }).then((res) => {
       const result = res as { success?: boolean; reason?: string };
-      setStatus(result?.success ? `已解除拉黑 @${handle}` : result?.reason ?? '操作失败');
+      setStatus(result?.success ? `已解除拉黑 @${handle}` : (result?.reason ?? '操作失败'));
     });
   };
 
@@ -332,7 +369,9 @@ export default function Dashboard() {
     const queuedNamesSet = new Set(names);
     void send({ action: 'blockAllHistoryUsers', users: names }).then(() => {
       // Card info for the queue page.
-      const info = { ...((state.queueInfo as Record<string, { displayName?: string; text?: string }>) ?? {}) };
+      const info = {
+        ...((state.queueInfo as Record<string, { displayName?: string; text?: string }>) ?? {}),
+      };
       for (const record of selectedRecords) {
         const name = extractCleanScreenName(record.user ?? '');
         if (name && queuedNamesSet.has(name)) {
@@ -368,7 +407,8 @@ export default function Dashboard() {
   /** One-shot purge of every synthetic 社区共享 record (multi-thousand backlog). */
   const cleanCommunityRecords = (): void => {
     if (communityRecordCount === 0) return;
-    if (!window.confirm(t.cleanCommunityConfirm.replace('{count}', String(communityRecordCount)))) return;
+    if (!window.confirm(t.cleanCommunityConfirm.replace('{count}', String(communityRecordCount))))
+      return;
     void send({ action: 'bulkRemoveRecords', scope: 'community' }).then((res) => {
       const removed = (res as { removed?: number })?.removed ?? communityRecordCount;
       setStatus(t.cleanCommunityDone.replace('{count}', String(removed)));
@@ -404,7 +444,8 @@ export default function Dashboard() {
   };
 
   const addWhitelist = (): void => {
-    const input = (document.getElementById('whitelist-input') as HTMLInputElement | null)?.value ?? '';
+    const input =
+      (document.getElementById('whitelist-input') as HTMLInputElement | null)?.value ?? '';
     const clean = extractCleanScreenName(input);
     if (!clean) return;
     setValue('whitelist', Array.from(new Set([...whitelist, clean])));
@@ -449,7 +490,11 @@ export default function Dashboard() {
     void send({ action: 'shareKeywords' })
       .then((res) => {
         const result = res as { success?: boolean; detail?: string; reason?: string };
-        setStatus(result?.success ? result.detail ?? t.shareKeywordsDone : result?.reason || t.shareKeywordsFail);
+        setStatus(
+          result?.success
+            ? (result.detail ?? t.shareKeywordsDone)
+            : result?.reason || t.shareKeywordsFail,
+        );
       })
       .catch(() => setStatus(t.shareKeywordsFail))
       .finally(() => setSyncingRules(false));
@@ -461,7 +506,7 @@ export default function Dashboard() {
     void send({ action: 'shareHandles' })
       .then((res) => {
         const result = res as { success?: boolean; detail?: string; reason?: string };
-        setStatus(result?.success ? result.detail ?? t.shareDone : result?.reason || t.shareFail);
+        setStatus(result?.success ? (result.detail ?? t.shareDone) : result?.reason || t.shareFail);
       })
       .catch(() => setStatus(t.shareFail))
       .finally(() => setSyncingHandles(false));
@@ -543,7 +588,8 @@ export default function Dashboard() {
             // keep empty
           }
         }
-        if (parsed.length > 0) setValue('keywords', Array.from(new Set([...customKeywords, ...parsed])).join('\n'));
+        if (parsed.length > 0)
+          setValue('keywords', Array.from(new Set([...customKeywords, ...parsed])).join('\n'));
       };
       reader.readAsText(file);
     };
@@ -576,7 +622,9 @@ export default function Dashboard() {
   const [queueFilter, setQueueFilter] = useState('all');
   const [queuePage, setQueuePage] = useState(0);
   const [showToken, setShowToken] = useState(false);
-  const visibleCloudKeywords = cloudKeywords.filter((k) => (cloudQuery ? k.includes(cloudQuery.toLowerCase()) : true));
+  const visibleCloudKeywords = cloudKeywords.filter((k) =>
+    cloudQuery ? k.includes(cloudQuery.toLowerCase()) : true,
+  );
 
   // triggered page state
   const [triggerQuery, setTriggerQuery] = useState('');
@@ -585,7 +633,15 @@ export default function Dashboard() {
   // `__blocked_on_x__` / `__queued_on_x__` are 1.5.1 pseudo-reasons driven by
   // the ledger and the auto-block queue instead of the record's own reason.
   const BLOCKED_FILTER = '__blocked_on_x__';
-  const triggerReasons = ['all', '内容屏蔽', '昵称屏蔽', '表情屏蔽', '特殊字符屏蔽', 'Grok屏蔽', BLOCKED_FILTER];
+  const triggerReasons = [
+    'all',
+    '内容屏蔽',
+    '昵称屏蔽',
+    '表情屏蔽',
+    '特殊字符屏蔽',
+    'Grok屏蔽',
+    BLOCKED_FILTER,
+  ];
   // 触发记录 = every record whose user is not blocked yet (queued ones stay
   // here, marked 排队中, with their action buttons); a successful block moves
   // the row into the 已拉黑 filter. Records stay in storage (1.5.1: blocks
@@ -607,12 +663,19 @@ export default function Dashboard() {
     } else if (triggerFilter !== 'all') {
       if (item.reason !== triggerFilter) return false;
     }
-    if (triggerQuery && !`${item.user} ${item.text} ${item.displayName}`.toLowerCase().includes(triggerQuery.toLowerCase())) {
+    if (
+      triggerQuery &&
+      !`${item.user} ${item.text} ${item.displayName}`
+        .toLowerCase()
+        .includes(triggerQuery.toLowerCase())
+    ) {
       return false;
     }
     return true;
   });
-  const selectedRecords = filteredHistory.filter((item) => selectedIds.includes(`${item.id}:${item.time}`));
+  const selectedRecords = filteredHistory.filter((item) =>
+    selectedIds.includes(`${item.id}:${item.time}`),
+  );
   // Synthetic 社区共享 records accumulate from past feeding rounds (the
   // multi-thousand backlog) — they carry no real signal, just visibility.
   const communityRecordCount = useMemo(
@@ -624,10 +687,12 @@ export default function Dashboard() {
   );
   // True when the working list is empty because every record's user is
   // already blocked (they live under the 已拉黑 filter now).
-  const allRecordsBlocked = blockedHistory.length > 0 && blockedHistory.every((item) => {
-    const handle = extractCleanScreenName(item.user ?? '');
-    return Boolean(handle) && blockedUsersOnX.includes(handle);
-  });
+  const allRecordsBlocked =
+    blockedHistory.length > 0 &&
+    blockedHistory.every((item) => {
+      const handle = extractCleanScreenName(item.user ?? '');
+      return Boolean(handle) && blockedUsersOnX.includes(handle);
+    });
   const selectedNames = Array.from(
     new Set(selectedRecords.map((item) => extractCleanScreenName(item.user ?? '')).filter(Boolean)),
   );
@@ -641,20 +706,34 @@ export default function Dashboard() {
     .map((name) => ({ name, at: blockedAtMap[name] ?? 0 }))
     .sort((a, b) => b.at - a.at);
   // No search: browse only the newest slice; searching looks at everything.
-  const queueInfoMap = (state.queueInfo as Record<string, { displayName?: string; text?: string }>) ?? {};
+  const queueInfoMap =
+    (state.queueInfo as Record<string, { displayName?: string; text?: string }>) ?? {};
   const displayNames: Record<string, string> = {};
-  for (const [key, value] of Object.entries(queueInfoMap)) displayNames[key] = value.displayName ?? '';
-  const { items: blockedPageItems, total: matchedBlockedCount, pages: totalBlockedPages } =
-    filterAndPageBlocked(blockedWithTime, blockedQuery, blockedPage, BLOCKED_PAGE_SIZE, BLOCKED_BROWSE_LIMIT, displayNames);
+  for (const [key, value] of Object.entries(queueInfoMap))
+    displayNames[key] = value.displayName ?? '';
+  const {
+    items: blockedPageItems,
+    total: matchedBlockedCount,
+    pages: totalBlockedPages,
+  } = filterAndPageBlocked(
+    blockedWithTime,
+    blockedQuery,
+    blockedPage,
+    BLOCKED_PAGE_SIZE,
+    BLOCKED_BROWSE_LIMIT,
+    displayNames,
+  );
 
   // Pending-queue classification: a queued handle is 社区共享 when it comes
-// from the synced community blacklist (communityHandles — the authoritative
-// server list, kept clean locally). History records are only a fallback:
-// they can be truncated (20k cap) or deleted, which would silently mislabel
-// entries as 正常触发. 100 per page — the queue routinely holds thousands.
+  // from the synced community blacklist (communityHandles — the authoritative
+  // server list, kept clean locally). History records are only a fallback:
+  // they can be truncated (20k cap) or deleted, which would silently mislabel
+  // entries as 正常触发. 100 per page — the queue routinely holds thousands.
   const QUEUE_PAGE_SIZE = 100;
   const communityQueuedSet = useMemo(() => {
-    const set = new Set(((state.communityHandles as string[]) ?? []).map(extractCleanScreenName).filter(Boolean));
+    const set = new Set(
+      ((state.communityHandles as string[]) ?? []).map(extractCleanScreenName).filter(Boolean),
+    );
     for (const r of (state.blockedHistory as SpamRecord[]) ?? []) {
       if (String(r.id ?? '').startsWith('community:')) {
         const handle = extractCleanScreenName(r.user ?? '');
@@ -664,8 +743,10 @@ export default function Dashboard() {
     return set;
   }, [state.communityHandles, state.blockedHistory]);
   const filteredQueueNames = useMemo(() => {
-    if (queueFilter === 'community') return pendingQueue.filter((name) => communityQueuedSet.has(name));
-    if (queueFilter === 'trigger') return pendingQueue.filter((name) => !communityQueuedSet.has(name));
+    if (queueFilter === 'community')
+      return pendingQueue.filter((name) => communityQueuedSet.has(name));
+    if (queueFilter === 'trigger')
+      return pendingQueue.filter((name) => !communityQueuedSet.has(name));
     return pendingQueue;
   }, [pendingQueue, queueFilter, communityQueuedSet]);
   const queuePageItems = filteredQueueNames.slice(
@@ -692,11 +773,58 @@ export default function Dashboard() {
     return days;
   })();
 
+  // Runtime status (1.3.0): since-install counters + the logged-in account.
+  const runtimeStats = (() => {
+    const totalBlocks = Number(state.statsTotalBlocks ?? 0);
+    const triggers = Number(state.statsTriggers ?? 0);
+    const dayCount = Object.keys((state.statsBlocksByDay as Record<string, number>) ?? {}).length;
+    const avgPerDay = dayCount > 0 ? Math.round((totalBlocks / dayCount) * 10) / 10 : 0;
+    return {
+      totalBlocks,
+      triggers,
+      avgPerDay,
+      username: String(state.currentUsername ?? ''),
+      seenAt: Number(state.currentUserSeenAt ?? 0),
+    };
+  })();
+  const runtimeStatsSection = (
+    <div className="settings-section">
+      <h3>{t.statsSectionTitle}</h3>
+      <div className="metric-grid small">
+        <article className="metric-card">
+          <span>{t.statTotalBlocked}</span>
+          <strong>{String(runtimeStats.totalBlocks)}</strong>
+        </article>
+        <article className="metric-card">
+          <span>{t.statAvgPerDay}</span>
+          <strong>{String(runtimeStats.avgPerDay)}</strong>
+        </article>
+        <article className="metric-card">
+          <span>{t.statTotalTriggers}</span>
+          <strong>{String(runtimeStats.triggers)}</strong>
+        </article>
+        <article className="metric-card">
+          <span>{t.statCurrentUser}</span>
+          <strong>{runtimeStats.username || '—'}</strong>
+        </article>
+      </div>
+      {runtimeStats.seenAt > 0 && (
+        <p className="hint">
+          {t.seenAt}:{new Date(runtimeStats.seenAt).toLocaleString()}
+        </p>
+      )}
+      {runtimeStats.totalBlocks === 0 && runtimeStats.triggers === 0 && (
+        <p className="hint">{t.noStatsYet}</p>
+      )}
+    </div>
+  );
+
   const navItems: Array<{ id: ViewId; label: string; icon: ReactNode }> = [
     { id: 'triggered', label: t.triggered, icon: <ListChecks size={18} /> },
     { id: 'blockedLog', label: t.blockedLog, icon: <ShieldCheck size={18} /> },
     { id: 'whitelist', label: t.whitelist, icon: <CheckCircle2 size={18} /> },
     { id: 'rules', label: t.rulesSync, icon: <ScrollText size={18} /> },
+    { id: 'logs', label: t.runtimeLogs, icon: <Activity size={18} /> },
     { id: 'settings', label: t.settings, icon: <SettingsIcon size={18} /> },
   ];
 
@@ -734,12 +862,17 @@ export default function Dashboard() {
         </header>
 
         {view === 'triggered' && (
-          <DataPanel title={t.triggered} meta={`${selectedRecords.length} / ${filteredHistory.length}`}>
+          <DataPanel
+            title={t.triggered}
+            meta={`${selectedRecords.length} / ${filteredHistory.length}`}
+          >
             <div className="toolbar">
               <label className="check-inline">
                 <input
                   type="checkbox"
-                  checked={filteredHistory.length > 0 && selectedIds.length === filteredHistory.length}
+                  checked={
+                    filteredHistory.length > 0 && selectedIds.length === filteredHistory.length
+                  }
                   onChange={(event) =>
                     setSelectedIds(
                       event.currentTarget.checked
@@ -758,9 +891,17 @@ export default function Dashboard() {
                   setSelectedIds([]);
                 }}
               />
-              <select value={triggerFilter} onChange={(e) => { setTriggerFilter(e.currentTarget.value); setSelectedIds([]); }}>
+              <select
+                value={triggerFilter}
+                onChange={(e) => {
+                  setTriggerFilter(e.currentTarget.value);
+                  setSelectedIds([]);
+                }}
+              >
                 {triggerReasons.map((reason) => (
-                  <option key={reason} value={reason}>{filterLabel(reason)}</option>
+                  <option key={reason} value={reason}>
+                    {filterLabel(reason)}
+                  </option>
                 ))}
               </select>
               <button
@@ -794,7 +935,9 @@ export default function Dashboard() {
               )}
             </div>
             <p className="hint">{t.blockHere}</p>
-            <p className="hint">{t.recordsScopeNote.replace('{count}', String(pendingQueue.length))}</p>
+            <p className="hint">
+              {t.recordsScopeNote.replace('{count}', String(pendingQueue.length))}
+            </p>
             <div className="form-grid inline">
               <label>
                 <span>{t.dailyLimitLabel}</span>
@@ -803,7 +946,12 @@ export default function Dashboard() {
                   min={1}
                   max={1000}
                   value={String(state.autoBlockDailyLimit ?? 20)}
-                  onChange={(e) => setValue('autoBlockDailyLimit', Math.max(1, Number(e.currentTarget.value) || 20))}
+                  onChange={(e) =>
+                    setValue(
+                      'autoBlockDailyLimit',
+                      Math.max(1, Number(e.currentTarget.value) || 20),
+                    )
+                  }
                 />
               </label>
               <label>
@@ -813,7 +961,9 @@ export default function Dashboard() {
                   min={1}
                   max={200}
                   value={String(state.autoBlockBatchLimit ?? 5)}
-                  onChange={(e) => setValue('autoBlockBatchLimit', Math.max(1, Number(e.currentTarget.value) || 5))}
+                  onChange={(e) =>
+                    setValue('autoBlockBatchLimit', Math.max(1, Number(e.currentTarget.value) || 5))
+                  }
                 />
               </label>
               <label>
@@ -823,7 +973,12 @@ export default function Dashboard() {
                   min={0}
                   max={600}
                   value={String(state.autoBlockDelaySeconds ?? 90)}
-                  onChange={(e) => setValue('autoBlockDelaySeconds', Math.max(0, Number(e.currentTarget.value) || 0))}
+                  onChange={(e) =>
+                    setValue(
+                      'autoBlockDelaySeconds',
+                      Math.max(0, Number(e.currentTarget.value) || 0),
+                    )
+                  }
                 />
               </label>
             </div>
@@ -845,7 +1000,9 @@ export default function Dashboard() {
                         checked={selectedIds.includes(key)}
                         onChange={(e) =>
                           setSelectedIds((current) =>
-                            e.currentTarget.checked ? [...current, key] : current.filter((id) => id !== key),
+                            e.currentTarget.checked
+                              ? [...current, key]
+                              : current.filter((id) => id !== key),
                           )
                         }
                       />
@@ -856,11 +1013,15 @@ export default function Dashboard() {
                       tabIndex={0}
                       onClick={() => handle && window.open(`https://x.com/${handle}`, '_blank')}
                     >
-                      <span className="history-display">{item.displayName || item.user || 'unknown'}</span>
+                      <span className="history-display">
+                        {item.displayName || item.user || 'unknown'}
+                      </span>
                       {handle && <span className="history-handle">@{handle}</span>}
                       {isQueued && <span className="queue-badge">{t.queuedBadge}</span>}
                       {isDupQueue && <span className="queue-badge dup">{t.dupQueueBadge}</span>}
-                      <span className="history-reason">{item.reason ? `[${item.reason}]` : ''}</span>
+                      <span className="history-reason">
+                        {item.reason ? `[${item.reason}]` : ''}
+                      </span>
                       <small>{formatTime(item.time)}</small>
                       <ExternalLink size={13} className="profile-card-open" />
                     </div>
@@ -880,12 +1041,18 @@ export default function Dashboard() {
                           type="button"
                           className="btn-whitelist"
                           title={isBlocked ? t.restoreWhitelist : t.whitelist}
-                          onClick={() => (isBlocked ? restoreToWhitelist(handle) : addWhitelistFromRecord(handle))}
+                          onClick={() =>
+                            isBlocked ? restoreToWhitelist(handle) : addWhitelistFromRecord(handle)
+                          }
                         >
                           {isBlocked ? t.restoreWhitelist : t.whitelist}
                         </button>
                       )}
-                      <button type="button" title={t.remove} onClick={() => removeRecord(item.id, item.time)}>
+                      <button
+                        type="button"
+                        title={t.remove}
+                        onClick={() => removeRecord(item.id, item.time)}
+                      >
                         <Trash2 size={16} />
                       </button>
                     </span>
@@ -929,17 +1096,24 @@ export default function Dashboard() {
               </p>
               {dupQueueNames.length > 0 && (
                 <div className="form-grid inline">
-                  <span className="toolbar-status">{t.dupQueueLabel}：{dupQueueNames.length}</span>
+                  <span className="toolbar-status">
+                    {t.dupQueueLabel}：{dupQueueNames.length}
+                  </span>
                   <button className="plain-button danger" type="button" onClick={deleteDupeQueue}>
                     <Trash2 size={16} /> {t.deleteDupQueue}
                   </button>
                 </div>
               )}
-              <p className="settings-subtitle">{t.queueTitle}（{t.queueRemaining} {pendingQueue.length}）</p>
+              <p className="settings-subtitle">
+                {t.queueTitle}（{t.queueRemaining} {pendingQueue.length}）
+              </p>
               <div className="form-grid inline">
                 <select
                   value={queueFilter}
-                  onChange={(e) => { setQueueFilter(e.currentTarget.value); setQueuePage(0); }}
+                  onChange={(e) => {
+                    setQueueFilter(e.currentTarget.value);
+                    setQueuePage(0);
+                  }}
                 >
                   <option value="all">{t.queueFilterAll}</option>
                   <option value="community">{t.queueFilterCommunity}</option>
@@ -949,7 +1123,10 @@ export default function Dashboard() {
               </div>
               <div className="card-grid">
                 {queuePageItems.map((name) => {
-                  const info = ((state.queueInfo as Record<string, { displayName?: string; text?: string }>) ?? {})[name];
+                  const info = ((state.queueInfo as Record<
+                    string,
+                    { displayName?: string; text?: string }
+                  >) ?? {})[name];
                   const isCommunity = communityQueuedSet.has(name);
                   return (
                     <div className="profile-card" key={name}>
@@ -975,7 +1152,11 @@ export default function Dashboard() {
                         >
                           <CheckCircle2 size={14} /> {t.whitelist}
                         </button>
-                        <button type="button" title={t.remove} onClick={() => removeQueueName(name)}>
+                        <button
+                          type="button"
+                          title={t.remove}
+                          onClick={() => removeQueueName(name)}
+                        >
                           <Trash2 size={16} />
                         </button>
                       </span>
@@ -986,26 +1167,38 @@ export default function Dashboard() {
               </div>
               {totalQueuePages > 1 && (
                 <div className="pager">
-                  <span className="toolbar-status">{filteredQueueNames.length} 条 · 第 {queuePage + 1} / {totalQueuePages} 页</span>
+                  <span className="toolbar-status">
+                    {filteredQueueNames.length} 条 · 第 {queuePage + 1} / {totalQueuePages} 页
+                  </span>
                   {queuePage > 0 && (
-                    <button type="button" onClick={() => setQueuePage(queuePage - 1)}>‹ 上一页</button>
+                    <button type="button" onClick={() => setQueuePage(queuePage - 1)}>
+                      ‹ 上一页
+                    </button>
                   )}
                   {queuePage < totalQueuePages - 1 && (
-                    <button type="button" onClick={() => setQueuePage(queuePage + 1)}>下一页 ›</button>
+                    <button type="button" onClick={() => setQueuePage(queuePage + 1)}>
+                      下一页 ›
+                    </button>
                   )}
                 </div>
               )}
-                <div className="card-grid">
+              <div className="card-grid">
                 <div className="form-grid inline">
                   <input
                     placeholder={t.search}
                     value={blockedQuery}
-                    onChange={(e) => { setBlockedQuery(e.currentTarget.value); setBlockedPage(0); }}
+                    onChange={(e) => {
+                      setBlockedQuery(e.currentTarget.value);
+                      setBlockedPage(0);
+                    }}
                   />
                 </div>
                 {blockedPageItems.map((entry) => {
                   const name = entry.name;
-                  const info = ((state.queueInfo as Record<string, { displayName?: string; text?: string }>) ?? {})[name];
+                  const info = ((state.queueInfo as Record<
+                    string,
+                    { displayName?: string; text?: string }
+                  >) ?? {})[name];
                   return (
                     <div className="profile-card" key={name}>
                       <div
@@ -1029,7 +1222,11 @@ export default function Dashboard() {
                         >
                           <CheckCircle2 size={14} /> {t.whitelist}
                         </button>
-                        <button type="button" className="btn-block-x success" onClick={() => unblockOne(name)}>
+                        <button
+                          type="button"
+                          className="btn-block-x success"
+                          onClick={() => unblockOne(name)}
+                        >
                           {t.unblock}
                         </button>
                       </span>
@@ -1037,30 +1234,41 @@ export default function Dashboard() {
                   );
                 })}
                 {matchedBlockedCount > BLOCKED_BROWSE_LIMIT && !blockedQuery && (
-                  <p className="hint">仅显示最新 {BLOCKED_BROWSE_LIMIT} 个；更早的用户请用上方搜索定位后解除拉黑。</p>
+                  <p className="hint">
+                    仅显示最新 {BLOCKED_BROWSE_LIMIT} 个；更早的用户请用上方搜索定位后解除拉黑。
+                  </p>
                 )}
                 {totalBlockedPages > 1 && (
                   <div className="pager">
-                    <span className="toolbar-status">{matchedBlockedCount} 条 · 第 {blockedPage + 1} / {totalBlockedPages} 页</span>
+                    <span className="toolbar-status">
+                      {matchedBlockedCount} 条 · 第 {blockedPage + 1} / {totalBlockedPages} 页
+                    </span>
                     {blockedPage > 0 && (
-                      <button type="button" onClick={() => setBlockedPage(blockedPage - 1)}>‹ 上一页</button>
+                      <button type="button" onClick={() => setBlockedPage(blockedPage - 1)}>
+                        ‹ 上一页
+                      </button>
                     )}
                     {blockedPage < totalBlockedPages - 1 && (
-                      <button type="button" onClick={() => setBlockedPage(blockedPage + 1)}>下一页 ›</button>
+                      <button type="button" onClick={() => setBlockedPage(blockedPage + 1)}>
+                        下一页 ›
+                      </button>
                     )}
                   </div>
                 )}
                 {blockedUsersOnX.length === 0 && <p className="empty-state">{t.blockedEmpty}</p>}
               </div>
             </DataPanel>
-
           </div>
         )}
 
         {view === 'whitelist' && (
           <DataPanel title={t.whitelist} meta={`${whitelist.length}`}>
             <div className="form-grid inline">
-              <input id="whitelist-input" placeholder={t.whitelistPlaceholder} onKeyDown={(e) => e.key === 'Enter' && addWhitelist()} />
+              <input
+                id="whitelist-input"
+                placeholder={t.whitelistPlaceholder}
+                onKeyDown={(e) => e.key === 'Enter' && addWhitelist()}
+              />
               <button className="solid-button" type="button" onClick={addWhitelist}>
                 {t.whitelistAdd}
               </button>
@@ -1070,7 +1278,16 @@ export default function Dashboard() {
                 <div className="list-row" key={name}>
                   <span className="history-handle">@{name}</span>
                   <span className="row-actions">
-                    <button type="button" title={t.remove} onClick={() => setValue('whitelist', whitelist.filter((w) => w !== name))}>
+                    <button
+                      type="button"
+                      title={t.remove}
+                      onClick={() =>
+                        setValue(
+                          'whitelist',
+                          whitelist.filter((w) => w !== name),
+                        )
+                      }
+                    >
                       <Trash2 size={16} />
                     </button>
                   </span>
@@ -1088,14 +1305,28 @@ export default function Dashboard() {
               meta={`${t.repoLabel}：${cloudRepo} · ${cloudKeywords.length}`}
             >
               <div className="form-grid inline">
-                <button className="solid-button" type="button" disabled={syncingRules} onClick={triggerSyncRules}>
-                  <Download size={16} className={syncingRules ? 'spin' : ''} /> {syncingRules ? t.syncing : t.syncRules}
+                <button
+                  className="solid-button"
+                  type="button"
+                  disabled={syncingRules}
+                  onClick={triggerSyncRules}
+                >
+                  <Download size={16} className={syncingRules ? 'spin' : ''} />{' '}
+                  {syncingRules ? t.syncing : t.syncRules}
                 </button>
-                <button className="plain-button" type="button" disabled={syncingRules || !state.shareEnabled} title={t.shareKeywordsHint} onClick={shareKeywords}>
+                <button
+                  className="plain-button"
+                  type="button"
+                  disabled={syncingRules || !state.shareEnabled}
+                  title={t.shareKeywordsHint}
+                  onClick={shareKeywords}
+                >
                   <Upload size={16} className={syncingRules ? 'spin' : ''} /> {t.shareKeywords}
                 </button>
                 <span className="toolbar-status">
-                  {Number(state.lastSyncTime ?? 0) > 0 ? formatTime(Number(state.lastSyncTime)) : ''}
+                  {Number(state.lastSyncTime ?? 0) > 0
+                    ? formatTime(Number(state.lastSyncTime))
+                    : ''}
                   {state.syncStatus === 'ok' ? ` · ${t.syncOk}` : ''}
                   {state.syncStatus === 'error' ? ` · ${t.syncFailed}` : ''}
                 </span>
@@ -1111,7 +1342,9 @@ export default function Dashboard() {
               </div>
               <div className="tag-cloud">
                 {visibleCloudKeywords.map((keyword) => {
-                  const disabled = ((state.disabledCloudKeywords as string[]) ?? []).includes(keyword);
+                  const disabled = ((state.disabledCloudKeywords as string[]) ?? []).includes(
+                    keyword,
+                  );
                   return (
                     <KeywordTag
                       key={keyword}
@@ -1127,7 +1360,11 @@ export default function Dashboard() {
 
             <DataPanel title={t.customKeywords} meta={`${customKeywords.length}`}>
               <div className="form-grid inline">
-                <input id="new-keyword" placeholder={t.keywordPlaceholder} onKeyDown={(e) => e.key === 'Enter' && addKeyword()} />
+                <input
+                  id="new-keyword"
+                  placeholder={t.keywordPlaceholder}
+                  onKeyDown={(e) => e.key === 'Enter' && addKeyword()}
+                />
                 <button className="solid-button" type="button" onClick={addKeyword}>
                   {t.addKeyword}
                 </button>
@@ -1146,16 +1383,28 @@ export default function Dashboard() {
                       <input
                         value={editingKeyword.value}
                         autoFocus
-                        onChange={(e) => setEditingKeyword({ old: keyword, value: e.currentTarget.value })}
+                        onChange={(e) =>
+                          setEditingKeyword({ old: keyword, value: e.currentTarget.value })
+                        }
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') saveEditedKeyword();
                           if (e.key === 'Escape') setEditingKeyword(null);
                         }}
                       />
-                      <button type="button" className="tag-action" title={t.save} onClick={saveEditedKeyword}>
+                      <button
+                        type="button"
+                        className="tag-action"
+                        title={t.save}
+                        onClick={saveEditedKeyword}
+                      >
                         ✓
                       </button>
-                      <button type="button" className="tag-action" title={t.cancel} onClick={() => setEditingKeyword(null)}>
+                      <button
+                        type="button"
+                        className="tag-action"
+                        title={t.cancel}
+                        onClick={() => setEditingKeyword(null)}
+                      >
                         ✕
                       </button>
                     </span>
@@ -1180,84 +1429,132 @@ export default function Dashboard() {
         )}
 
         {view === 'logs' && (
-          <DataPanel title={t.logs} meta={`${filteredLogs.length} / ${logs.length}`}>
-            <div className="toolbar">
-              <select value={logLevel} onChange={(e) => { setLogLevel(e.currentTarget.value); setLogPage(0); }}>
-                {logLevels.map((level) => (
-                  <option key={level} value={level}>{level === 'all' ? t.all : t[`level-${level}`] ?? level}</option>
-                ))}
-              </select>
-              <select value={logCategory} onChange={(e) => { setLogCategory(e.currentTarget.value); setLogPage(0); }}>
-                {logCategories.map((category) => (
-                  <option key={category} value={category}>{category === 'all' ? t.all : t[`cat-${category}`] ?? category}</option>
-                ))}
-              </select>
-              <input
-                placeholder={t.search}
-                value={logQuery}
-                onChange={(e) => { setLogQuery(e.currentTarget.value); setLogPage(0); }}
-              />
-              <button className="plain-button" type="button" onClick={() => exportLogs(filteredLogs)}>
-                <Download size={16} /> {t.export}
-              </button>
-              <button
-                className="plain-button"
-                type="button"
-                onClick={() => { void pruneLogs(7); setStatus(t.prunedNote); }}
-                title={t.pruneTitle}
-              >
-                <Trash2 size={16} /> {t.prune}
-              </button>
-              <button
-                className="plain-button"
-                type="button"
-                onClick={() => { if (window.confirm(t.clearAll)) setValue('xshieldLogs', []); }}
-              >
-                <Trash2 size={16} /> {t.clearAll}
-              </button>
-            </div>
-            <div className="compact-list">
-              {filteredLogs
-                .slice(logPage * LOG_PAGE_SIZE, logPage * LOG_PAGE_SIZE + LOG_PAGE_SIZE)
-                .map((entry) => (
-                  <div className="list-row log-row" key={entry.id}>
-                    <span className={`log-level ${entry.level}`}>{entry.level}</span>
-                    <span className={`log-cat ${entry.category}`}>{entry.category}</span>
-                    <span className="history-text">{entry.message}</span>
-                    <small>{new Date(entry.time).toLocaleString()}</small>
-                  </div>
-                ))}
-              {filteredLogs.length === 0 && <p className="empty-state">{t.logsEmpty}</p>}
-            </div>
-            {filteredLogs.length > LOG_PAGE_SIZE && (
+          <div className="stack">
+            <DataPanel title={t.runtimeLogs}>{runtimeStatsSection}</DataPanel>
+            <DataPanel title={t.logs} meta={`${filteredLogs.length} / ${logs.length}`}>
               <div className="toolbar">
-                <button className="plain-button" type="button" disabled={logPage === 0} onClick={() => setLogPage(logPage - 1)}>‹</button>
-                <span className="toolbar-status">{logPage + 1} / {Math.ceil(filteredLogs.length / LOG_PAGE_SIZE)}</span>
+                <select
+                  value={logLevel}
+                  onChange={(e) => {
+                    setLogLevel(e.currentTarget.value);
+                    setLogPage(0);
+                  }}
+                >
+                  {logLevels.map((level) => (
+                    <option key={level} value={level}>
+                      {level === 'all' ? t.all : (t[`level-${level}`] ?? level)}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={logCategory}
+                  onChange={(e) => {
+                    setLogCategory(e.currentTarget.value);
+                    setLogPage(0);
+                  }}
+                >
+                  {logCategories.map((category) => (
+                    <option key={category} value={category}>
+                      {category === 'all' ? t.all : (t[`cat-${category}`] ?? category)}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  placeholder={t.search}
+                  value={logQuery}
+                  onChange={(e) => {
+                    setLogQuery(e.currentTarget.value);
+                    setLogPage(0);
+                  }}
+                />
                 <button
                   className="plain-button"
                   type="button"
-                  disabled={(logPage + 1) * LOG_PAGE_SIZE >= filteredLogs.length}
-                  onClick={() => setLogPage(logPage + 1)}
-                >›</button>
+                  onClick={() => exportLogs(filteredLogs)}
+                >
+                  <Download size={16} /> {t.export}
+                </button>
+                <button
+                  className="plain-button"
+                  type="button"
+                  onClick={() => {
+                    void pruneLogs(7);
+                    setStatus(t.prunedNote);
+                  }}
+                  title={t.pruneTitle}
+                >
+                  <Trash2 size={16} /> {t.prune}
+                </button>
+                <button
+                  className="plain-button"
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm(t.clearAll)) setValue('xshieldLogs', []);
+                  }}
+                >
+                  <Trash2 size={16} /> {t.clearAll}
+                </button>
               </div>
-            )}
-          </DataPanel>
+              <div className="compact-list">
+                {filteredLogs
+                  .slice(logPage * LOG_PAGE_SIZE, logPage * LOG_PAGE_SIZE + LOG_PAGE_SIZE)
+                  .map((entry) => (
+                    <div className="list-row log-row" key={entry.id}>
+                      <span className={`log-level ${entry.level}`}>{entry.level}</span>
+                      <span className={`log-cat ${entry.category}`}>{entry.category}</span>
+                      <span className="history-text">{entry.message}</span>
+                      <small>{new Date(entry.time).toLocaleString()}</small>
+                    </div>
+                  ))}
+                {filteredLogs.length === 0 && <p className="empty-state">{t.logsEmpty}</p>}
+              </div>
+              {filteredLogs.length > LOG_PAGE_SIZE && (
+                <div className="toolbar">
+                  <button
+                    className="plain-button"
+                    type="button"
+                    disabled={logPage === 0}
+                    onClick={() => setLogPage(logPage - 1)}
+                  >
+                    ‹
+                  </button>
+                  <span className="toolbar-status">
+                    {logPage + 1} / {Math.ceil(filteredLogs.length / LOG_PAGE_SIZE)}
+                  </span>
+                  <button
+                    className="plain-button"
+                    type="button"
+                    disabled={(logPage + 1) * LOG_PAGE_SIZE >= filteredLogs.length}
+                    onClick={() => setLogPage(logPage + 1)}
+                  >
+                    ›
+                  </button>
+                </div>
+              )}
+            </DataPanel>
+          </div>
         )}
 
         {view === 'settings' && (
           <DataPanel title={t.settings}>
+            {runtimeStatsSection}
             <div className="settings-section">
               <h3>{t.secRuntime}</h3>
               <div className="settings-grid">
                 <label className="check-label">
                   <span>{t.enabled}</span>
-                  <Toggle checked={Boolean(state.enabled)} onChange={(v) => setValue('enabled', v)} />
+                  <Toggle
+                    checked={Boolean(state.enabled)}
+                    onChange={(v) => setValue('enabled', v)}
+                  />
                 </label>
                 <label className="field-row compact">
                   <span>{t.displayMode}</span>
                   <select
                     value={state.highlightMode ? 'highlight' : 'hide'}
-                    onChange={(e) => setValue('highlightMode', e.currentTarget.value === 'highlight')}
+                    onChange={(e) =>
+                      setValue('highlightMode', e.currentTarget.value === 'highlight')
+                    }
                   >
                     <option value="hide">{t.modeHide}</option>
                     <option value="highlight">{t.modeHighlight}</option>
@@ -1265,7 +1562,10 @@ export default function Dashboard() {
                 </label>
                 <label className="field-row compact">
                   <span>{t.language}</span>
-                  <select value={String(state.language ?? 'system')} onChange={(e) => setValue('language', e.currentTarget.value)}>
+                  <select
+                    value={String(state.language ?? 'system')}
+                    onChange={(e) => setValue('language', e.currentTarget.value)}
+                  >
                     <option value="system">{t.system}</option>
                     <option value="zh-CN">{t.simplifiedChinese}</option>
                     <option value="zh-TW">{t.traditionalChinese}</option>
@@ -1280,23 +1580,38 @@ export default function Dashboard() {
               <div className="settings-grid compact">
                 <label className="check-label">
                   <span>{t.checkUsername}</span>
-                  <Toggle checked={Boolean(state.checkUsername)} onChange={(v) => setValue('checkUsername', v)} />
+                  <Toggle
+                    checked={Boolean(state.checkUsername)}
+                    onChange={(v) => setValue('checkUsername', v)}
+                  />
                 </label>
                 <label className="check-label">
                   <span>{t.onlyComments}</span>
-                  <Toggle checked={Boolean(state.onlyComments)} onChange={(v) => setValue('onlyComments', v)} />
+                  <Toggle
+                    checked={Boolean(state.onlyComments)}
+                    onChange={(v) => setValue('onlyComments', v)}
+                  />
                 </label>
                 <label className="check-label">
                   <span>{t.blockSpecialChars}</span>
-                  <Toggle checked={Boolean(state.blockSpecialChars)} onChange={(v) => setValue('blockSpecialChars', v)} />
+                  <Toggle
+                    checked={Boolean(state.blockSpecialChars)}
+                    onChange={(v) => setValue('blockSpecialChars', v)}
+                  />
                 </label>
                 <label className="check-label">
                   <span>{t.blockEmoji}</span>
-                  <Toggle checked={Boolean(state.blockEmoji)} onChange={(v) => setValue('blockEmoji', v)} />
+                  <Toggle
+                    checked={Boolean(state.blockEmoji)}
+                    onChange={(v) => setValue('blockEmoji', v)}
+                  />
                 </label>
                 <label className="check-label">
                   <span>{t.blockGrok}</span>
-                  <Toggle checked={Boolean(state.blockGrok)} onChange={(v) => setValue('blockGrok', v)} />
+                  <Toggle
+                    checked={Boolean(state.blockGrok)}
+                    onChange={(v) => setValue('blockGrok', v)}
+                  />
                 </label>
               </div>
             </div>
@@ -1306,7 +1621,10 @@ export default function Dashboard() {
               <div className="settings-grid">
                 <label className="check-label">
                   <span>{t.cloudEnabled}</span>
-                  <Toggle checked={Boolean(state.cloudEnabled)} onChange={(v) => setValue('cloudEnabled', v)} />
+                  <Toggle
+                    checked={Boolean(state.cloudEnabled)}
+                    onChange={(v) => setValue('cloudEnabled', v)}
+                  />
                 </label>
                 <label className="field-row">
                   <span>{t.cloudOwnerRepo}</span>
@@ -1327,7 +1645,10 @@ export default function Dashboard() {
               <div className="settings-grid">
                 <label className="check-label">
                   <span>{t.shareEnabledLabel}</span>
-                  <Toggle checked={Boolean(state.shareEnabled)} onChange={(v) => setValue('shareEnabled', v)} />
+                  <Toggle
+                    checked={Boolean(state.shareEnabled)}
+                    onChange={(v) => setValue('shareEnabled', v)}
+                  />
                 </label>
                 <label className="field-row">
                   <span>{t.githubTokenLabel}</span>
@@ -1336,26 +1657,54 @@ export default function Dashboard() {
                       type={showToken ? 'text' : 'password'}
                       value={String(state.githubToken ?? '')}
                       disabled={!state.shareEnabled}
-                      placeholder={showToken ? (state.githubToken ? '当前已保存令牌' : '未设置') : ''}
+                      placeholder={
+                        showToken ? (state.githubToken ? '当前已保存令牌' : '未设置') : ''
+                      }
                       onChange={(e) => setValue('githubToken', e.currentTarget.value)}
                     />
-                    <button type="button" title={showToken ? t.hide : t.show} onClick={() => setShowToken(!showToken)} disabled={!state.shareEnabled}>
+                    <button
+                      type="button"
+                      title={showToken ? t.hide : t.show}
+                      onClick={() => setShowToken(!showToken)}
+                      disabled={!state.shareEnabled}
+                    >
                       {showToken ? <EyeOff size={14} /> : <Eye size={14} />}
                     </button>
-                    <button type="button" title={t.clearToken} onClick={() => setValue('githubToken', '')} disabled={!state.shareEnabled}>
+                    <button
+                      type="button"
+                      title={t.clearToken}
+                      onClick={() => setValue('githubToken', '')}
+                      disabled={!state.shareEnabled}
+                    >
                       <Trash2 size={14} />
                     </button>
                   </span>
                 </label>
               </div>
               <div className="form-grid inline">
-                <button className="plain-button" type="button" disabled={syncingHandles} onClick={triggerSyncHandles}>
-                  <Download size={16} className={syncingHandles ? 'spin' : ''} /> {syncingHandles ? t.syncing : t.syncBlacklist}
+                <button
+                  className="plain-button"
+                  type="button"
+                  disabled={syncingHandles}
+                  onClick={triggerSyncHandles}
+                >
+                  <Download size={16} className={syncingHandles ? 'spin' : ''} />{' '}
+                  {syncingHandles ? t.syncing : t.syncBlacklist}
                 </button>
-                <button className="plain-button" type="button" disabled={syncingHandles || !state.shareEnabled} onClick={shareHandles}>
+                <button
+                  className="plain-button"
+                  type="button"
+                  disabled={syncingHandles || !state.shareEnabled}
+                  onClick={shareHandles}
+                >
                   <Upload size={16} className={syncingHandles ? 'spin' : ''} /> {t.shareHandles}
                 </button>
-                <button className="plain-button" type="button" onClick={exportDiagnostics} title={t.diagnostics}>
+                <button
+                  className="plain-button"
+                  type="button"
+                  onClick={exportDiagnostics}
+                  title={t.diagnostics}
+                >
                   <Download size={16} /> {t.diagnostics}
                 </button>
               </div>
@@ -1376,10 +1725,18 @@ export default function Dashboard() {
               <h3>{t.supportTitle}</h3>
               <p className="hint">{t.supportHint}</p>
               <div className="form-grid inline">
-                <button className="plain-button" type="button" onClick={() => window.open('https://github.com/sponsors/smthdagg', '_blank')}>
+                <button
+                  className="plain-button"
+                  type="button"
+                  onClick={() => window.open('https://github.com/sponsors/smthdagg', '_blank')}
+                >
                   ♥ GitHub Sponsors
                 </button>
-                <button className="plain-button" type="button" onClick={() => window.open('https://afdian.net/a/smthdagg', '_blank')}>
+                <button
+                  className="plain-button"
+                  type="button"
+                  onClick={() => window.open('https://afdian.net/a/smthdagg', '_blank')}
+                >
                   ♥ 爱发电
                 </button>
               </div>

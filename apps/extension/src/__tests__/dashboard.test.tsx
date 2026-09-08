@@ -78,11 +78,17 @@ function simulateBackground(message: Record<string, unknown>): unknown {
   if (message.action === 'blockAllHistoryUsers') {
     // Enqueue only — records stay in blockedHistory (nothing is deleted
     // at enqueue time or at block time).
-    return { success: true, total: (message.users as string[]).length, queued: (message.users as string[]).length };
+    return {
+      success: true,
+      total: (message.users as string[]).length,
+      queued: (message.users as string[]).length,
+    };
   }
   if (message.action === 'unblockUserOnX') {
     const name = String(message.screenName);
-    storageData.blockedUsersOnX = ((storageData.blockedUsersOnX as string[]) ?? []).filter((n) => n !== name);
+    storageData.blockedUsersOnX = ((storageData.blockedUsersOnX as string[]) ?? []).filter(
+      (n) => n !== name,
+    );
     return { success: true };
   }
   return { success: true };
@@ -178,9 +184,9 @@ describe('dashboard triggered page blocking', () => {
     expect(directLedgerWrites).toHaveLength(0);
 
     // Select-all checkbox exists.
-    const selectAll = Array.from(container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')).find(
-      (input) => (input.parentElement?.textContent ?? '').includes('全选'),
-    );
+    const selectAll = Array.from(
+      container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'),
+    ).find((input) => (input.parentElement?.textContent ?? '').includes('全选'));
     expect(selectAll).toBeDefined();
 
     // Bulk button shows with count after selecting all.
@@ -190,8 +196,8 @@ describe('dashboard triggered page blocking', () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
     });
-    const bulk = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) =>
-      (button.textContent ?? '').includes('拉黑列表'),
+    const bulk = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => (button.textContent ?? '').includes('拉黑列表'),
     );
     expect(bulk).toBeDefined();
     expect(bulk?.textContent).toContain('2');
@@ -263,7 +269,9 @@ describe('dashboard triggered page blocking', () => {
     const names = Array.from({ length: 150 }, (_, i) => `bulk${String(i).padStart(3, '0')}`);
     storageData.blockedUsersOnX = names;
     const at: Record<string, number> = {};
-    names.forEach((name, i) => { at[name] = Date.now() - i * 60_000; });
+    names.forEach((name, i) => {
+      at[name] = Date.now() - i * 60_000;
+    });
     storageData.blockedAt = at;
     storageData.blockedHistory = [];
     // Clear the pending queue seeded by the previous test — this page counts
@@ -283,8 +291,12 @@ describe('dashboard triggered page blocking', () => {
       (b) => b.textContent === '拉黑记录',
     );
     expect(navBtn).toBeDefined();
-    await act(async () => { navBtn!.click(); });
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+    await act(async () => {
+      navBtn!.click();
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
 
     // Page 1 of the browse limit: 100 cards, newest first, pager visible.
     expect(container.querySelectorAll('.profile-card').length).toBe(100);
@@ -297,11 +309,69 @@ describe('dashboard triggered page blocking', () => {
     ) as HTMLInputElement;
     expect(search).toBeDefined();
     await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(search, 'bulk0');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(
+        search,
+        'bulk0',
+      );
       search.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
-    console.log('DBG inputs=', JSON.stringify(Array.from(container.querySelectorAll('input')).map((el) => (el as HTMLInputElement).placeholder)), 'searchValue=', (search as HTMLInputElement).value);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    console.log(
+      'DBG inputs=',
+      JSON.stringify(
+        Array.from(container.querySelectorAll('input')).map(
+          (el) => (el as HTMLInputElement).placeholder,
+        ),
+      ),
+      'searchValue=',
+      (search as HTMLInputElement).value,
+    );
     console.log('DBG cards=', container.querySelectorAll('.profile-card').length);
+  });
+
+  it('status & logs page and the settings page both render the runtime stats card', async () => {
+    const { default: Dashboard } = await import('../dashboard/Dashboard');
+    await act(async () => {
+      root.render(<Dashboard />);
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    // Sidebar now exposes the status & logs page.
+    const nav = container.textContent ?? '';
+    expect(nav).toContain('状态与日志');
+
+    // Open the status & logs page: stats card on top, logs panel below.
+    const logsNav = Array.from(container.querySelectorAll('button')).find((button) =>
+      (button.textContent ?? '').includes('状态与日志'),
+    );
+    expect(logsNav).toBeDefined();
+    await act(async () => {
+      logsNav!.click();
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    const pageText = container.textContent ?? '';
+    expect(pageText).toContain('运行状态');
+    expect(pageText).toContain('累计拉黑');
+    expect(pageText).toContain('累计触发');
+    expect(pageText).toContain('当前账号');
+    expect(pageText).toContain('日志');
+
+    // The settings page shows the same stats section at the top.
+    const settingsNav = Array.from(container.querySelectorAll('button')).find((button) =>
+      (button.textContent ?? '').includes('总设置'),
+    );
+    await act(async () => {
+      settingsNav!.click();
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    expect(container.textContent ?? '').toContain('运行状态');
   });
 });

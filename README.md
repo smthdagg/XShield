@@ -61,7 +61,8 @@ pnpm build        # 产物：apps/extension/dist
 | 拉黑记录 | 统计数字（今日 / 剩余 / 累计）、近 7 天按日拉黑、**待拉黑队列列表（社区共享 / 正常触发分类筛选）**、已拉黑用户列表（最新 300 个分页浏览，搜索可定位全部，可解除拉黑） |
 | 白名单 | 永久豁免的用户，永不触发、永不拉黑 |
 | 规则与同步 | 云端规则（keywords.txt）**手动同步与共享**、本地词库增删改、导入导出 |
-| 总设置 | 总开关、隐藏/高亮切换、各项过滤开关、词库源、**同步与共享（黑名单手动同步/共享、GitHub Token、同步记录）**、导出诊断信息 |
+| 状态与日志 | **运行状态**（累计拉黑 / 平均每天 / 累计触发 / 当前账号）、活动日志（可筛选、导出、清理） |
+| 总设置 | **运行状态**卡片、总开关、隐藏/高亮切换、各项过滤开关、词库源、**同步与共享（黑名单手动同步/共享、GitHub Token、同步记录）**、导出诊断信息 |
 
 **同步说明**：无自动同步。规则（keywords.txt）在「规则与同步」页手动同步/共享；黑名单（handles.txt）在「总设置 → 同步与共享」手动同步/共享；两者共用同一个仓库源（默认 `smthdagg/XShield-keywords`，可在总设置修改）。每次同步/共享/删除都会写入本地日志（「日志」页可查可导出）。
 
@@ -140,7 +141,8 @@ Then load `apps/extension/dist` (steps 3–4 of Option A). Building requires Nod
 | 拉黑记录 (Block log) | counters (today / remaining / total), last-7-days daily blocks, pending-queue list (community/trigger filters), blocked-users database view (newest 300 paginated, full search, unblock) |
 | 白名单 (Whitelist) | permanently exempted users |
 | 规则与同步 (Rules & sync) | manual rules (keywords.txt) sync & share, local library add/edit/import/export |
-| 总设置 (Settings) | master switch, hide/highlight, filter toggles, library source, manual blacklist sync & share, GitHub token, sync records, export diagnostics |
+| 状态与日志 (Status & Logs) | **runtime stats** (total blocked / avg per active day / total triggers / current account) + activity logs (filter, export, prune) |
+| 总设置 (Settings) | **runtime stats** card, master switch, hide/highlight, filter toggles, library source, manual blacklist sync & share, GitHub token, sync records, export diagnostics |
 
 **Sync is manual** — there is no auto-sync. Rules (`keywords.txt`) sync/share on the Rules & sync page; the blacklist (`handles.txt`) sync/share under Settings → Sync & share; both share one repo source (default `smthdagg/XShield-keywords`). Every sync, share and deletion is written to the local log (Logs page, exportable).
 

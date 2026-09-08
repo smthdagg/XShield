@@ -35,6 +35,68 @@ function isExtensionAlive(): boolean {
   return Boolean(chrome.runtime?.id);
 }
 
+/**
+ * Track the logged-in account for the dashboard runtime-status card. X renders
+ * the current user's profile as `AppTabBar_Profile_Link` in the primary nav;
+ * fall back to any single-segment nav link that looks like a handle. Reports
+ * to the background only when the handle actually changes — one message per
+ * account switch, not a per-tick stream.
+ */
+let lastReportedUser = '';
+
+const KNOWN_NAV_ROUTES = new Set([
+  'home',
+  'explore',
+  'notifications',
+  'messages',
+  'groks',
+  'bookmarks',
+  'communities',
+  'connect',
+  'i',
+  'settings',
+  'search',
+  'jobs',
+  'lists',
+  'topics',
+  'moments',
+  'analytics',
+  'news',
+  'insights',
+  'advertising',
+]);
+
+function detectCurrentUser(): void {
+  const primary = document.querySelector<HTMLAnchorElement>(
+    'a[data-testid="AppTabBar_Profile_Link"]',
+  );
+  let handle = '';
+  if (primary) {
+    handle = extractCleanScreenName(primary.getAttribute('href') ?? '');
+  } else {
+    const nav = document.querySelector('nav[aria-label="Primary"]');
+    const candidates = nav
+      ? Array.from(nav.querySelectorAll<HTMLAnchorElement>('a[href^="/"]'))
+      : [];
+    const profileLink = candidates.find((a) => {
+      const seg = (a.getAttribute('href') ?? '').split('?')[0].replace(/\/+$/, '');
+      return (
+        /^\/[a-zA-Z0-9_]{1,15}$/.test(seg) && !KNOWN_NAV_ROUTES.has(seg.slice(1).toLowerCase())
+      );
+    });
+    handle = profileLink ? extractCleanScreenName(profileLink.getAttribute('href') ?? '') : '';
+  }
+  if (!handle || handle === lastReportedUser) return;
+  lastReportedUser = handle;
+  void chrome.runtime
+    .sendMessage({
+      action: 'reportCurrentUser',
+      username: handle,
+      seenAt: Date.now(),
+    })
+    .catch(() => {});
+}
+
 function matchesBlocklist(text: string): boolean {
   if (blockRegexes.length === 0) return false;
   return blockRegexes.some((regex) => regex.test(text));
@@ -83,9 +145,7 @@ function buildRegexes(keywords: string[]): RegExp[] {
   const customRegexes: RegExp[] = [];
 
   for (const kw of keywords) {
-    const match = kw.startsWith('/')
-      ? kw.match(/^\/(?<pattern>.+)\/(?<flags>[a-zA-Z]*)$/)
-      : null;
+    const match = kw.startsWith('/') ? kw.match(/^\/(?<pattern>.+)\/(?<flags>[a-zA-Z]*)$/) : null;
     if (match) {
       try {
         const cleanFlags = (match.groups?.flags ?? '').replace(/[gy]/g, '');
@@ -112,12 +172,7 @@ function buildRegexes(keywords: string[]): RegExp[] {
 async function mergeKeywords(): Promise<void> {
   try {
     const items = await chrome.storage.local.get(
-      getStorageDefaults(
-        'keywords',
-        'cloudEnabled',
-        'cloudKeywords',
-        'disabledCloudKeywords',
-      ),
+      getStorageDefaults('keywords', 'cloudEnabled', 'cloudKeywords', 'disabledCloudKeywords'),
     );
 
     const userKws = parseKeywords((items.keywords as string) ?? '');
@@ -140,7 +195,8 @@ async function mergeKeywords(): Promise<void> {
 }
 
 function getEnclosingTweetIfRelevant(target: Node | null): Element | null {
-  let curr = target?.nodeType === Node.ELEMENT_NODE ? (target as Element) : (target?.parentElement ?? null);
+  let curr =
+    target?.nodeType === Node.ELEMENT_NODE ? (target as Element) : (target?.parentElement ?? null);
   let isRelevant = false;
   while (curr && curr !== document.body) {
     const testId = curr.getAttribute('data-testid');
@@ -172,17 +228,17 @@ function getTweetTextForKeywords(node: Element | null): string {
         if (!imgEl.alt) {
           // no alt text
         } else {
-        let altText = imgEl.alt;
-        if (
-          imgEl.src &&
-          (imgEl.src.includes('emoji') || imgEl.src.includes('twemoji')) &&
-          !altText.endsWith('\uFE0F')
-        ) {
-          if (altText.length <= 2) {
-            altText += '\uFE0F';
+          let altText = imgEl.alt;
+          if (
+            imgEl.src &&
+            (imgEl.src.includes('emoji') || imgEl.src.includes('twemoji')) &&
+            !altText.endsWith('\uFE0F')
+          ) {
+            if (altText.length <= 2) {
+              altText += '\uFE0F';
+            }
           }
-        }
-        text += altText;
+          text += altText;
         }
       }
     }
@@ -228,7 +284,10 @@ function getPageContext(): { pageStatusId: string | null; isPhotoVideoOverlay: b
   };
 }
 
-function resolveStatusPage(tweet: Element, pageContext: { pageStatusId: string | null; isPhotoVideoOverlay: boolean }): boolean {
+function resolveStatusPage(
+  tweet: Element,
+  pageContext: { pageStatusId: string | null; isPhotoVideoOverlay: boolean },
+): boolean {
   if (pageContext.isPhotoVideoOverlay) {
     if (tweet.closest('[role="dialog"]') !== null) return true;
     const state = tweetStateMap.get(tweet);
@@ -436,21 +495,14 @@ function filterTweets(specificTweets: Element[] | null = null): void {
     if (shouldCheck && onlyComments && isMainTweet) shouldCheck = false;
 
     const spamResult = shouldCheck
-      ? detectSpam(
-          tweet,
-          textNode,
-          userNode,
-          rawTweetText,
-          rawUserName,
-          isStatusPage,
-          isMainTweet,
-        )
+      ? detectSpam(tweet, textNode, userNode, rawTweetText, rawUserName, isStatusPage, isMainTweet)
       : null;
     const isSpam = spamResult?.isSpam ?? false;
 
     state.isSpam = isSpam;
     if (isSpam) {
-      const { isAutoBlock, blockReason, userName, stableHandle, displayName } = spamResult as SpamDecision;
+      const { isAutoBlock, blockReason, userName, stableHandle, displayName } =
+        spamResult as SpamDecision;
       tweet.classList.remove('x-comment-blocker-hidden-reply');
       if (highlightMode) {
         tweet.classList.remove('x-comment-blocker-hidden');
@@ -468,7 +520,9 @@ function filterTweets(specificTweets: Element[] | null = null): void {
         const grokMeta = tweet.querySelector(
           'a[href*="/i/grok/share"], meta[content*="/i/grok/share"]',
         );
-        const grokLink = grokMeta ? grokMeta.getAttribute('content') || (grokMeta as HTMLAnchorElement).href : '';
+        const grokLink = grokMeta
+          ? grokMeta.getAttribute('content') || (grokMeta as HTMLAnchorElement).href
+          : '';
         if (grokLink) {
           normalizedBody = normalizedBody ? `${normalizedBody}\n${grokLink}` : grokLink;
         }
@@ -631,6 +685,13 @@ async function init(): Promise<void> {
     console.info(
       `[XShield] content v${chrome.runtime.getManifest().version} ready · 启用=${filterEnabled} · 规则=${blockRegexes.length}`,
     );
+
+    // Runtime-status: report the logged-in account once, then re-check every
+    // 10 s so SPA account switches are noticed without a per-tick message.
+    detectCurrentUser();
+    setInterval(() => {
+      if (isExtensionAlive()) detectCurrentUser();
+    }, 10_000);
   } catch (e) {
     console.error('[X-Blocker] init error:', e);
   }

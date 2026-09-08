@@ -4,7 +4,8 @@
  * (identical behaviour); everything else matches the original line by line.
  */
 
-export const browserApi: typeof chrome = (globalThis as unknown as { browser?: typeof chrome }).browser ?? globalThis.chrome;
+export const browserApi: typeof chrome =
+  (globalThis as unknown as { browser?: typeof chrome }).browser ?? globalThis.chrome;
 
 export const DEFAULT_CLOUD_OWNER_REPO = 'smthdagg/XShield-keywords';
 
@@ -76,6 +77,15 @@ const STORAGE_DEFAULTS: Record<string, unknown> = {
   autoBlockPausedUntil: 0,
   autoBlockBatchCount: 0,
   whitelist: [],
+  // Runtime stats (1.3.0): monotonic since-install counters. `statsTriggers`
+  // and `statsTotalBlocks` intentionally survive record deletion / history
+  // clears — they measure the extension's lifetime activity.
+  statsTotalBlocks: 0,
+  statsTriggers: 0,
+  statsBlocksByDay: {},
+  statsMigrated: false,
+  currentUsername: '',
+  currentUserSeenAt: 0,
   // XShield extension keys (not part of 1.4.3)
   highlightMode: false,
 };
@@ -155,7 +165,9 @@ function handleCdnUrl(ownerRepo: string): string {
 }
 
 /** Part 1 of sync: the keyword rules file (keywords.txt). Manual only. */
-export async function syncCloudRules(ownerRepo: string = DEFAULT_CLOUD_OWNER_REPO): Promise<boolean> {
+export async function syncCloudRules(
+  ownerRepo: string = DEFAULT_CLOUD_OWNER_REPO,
+): Promise<boolean> {
   const { cloudEnabled } = await browserApi.storage.local.get(getStorageDefaults('cloudEnabled'));
   if (!cloudEnabled) return false;
 
@@ -262,11 +274,17 @@ export async function syncCloudHandles(
   try {
     let hResp: Response;
     try {
-      hResp = await fetch(handleApiUrl(ownerRepo), { cache: 'no-store', signal: AbortSignal.timeout(15000) });
+      hResp = await fetch(handleApiUrl(ownerRepo), {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(15000),
+      });
       if (!hResp.ok) throw new Error(`API HTTP ${hResp.status}`);
     } catch {
       try {
-        hResp = await fetch(`${handleCdnUrl(ownerRepo)}?t=${Date.now()}`, { cache: 'no-store', signal: AbortSignal.timeout(15000) });
+        hResp = await fetch(`${handleCdnUrl(ownerRepo)}?t=${Date.now()}`, {
+          cache: 'no-store',
+          signal: AbortSignal.timeout(15000),
+        });
         if (!hResp.ok) throw new Error(`CDN HTTP ${hResp.status}`);
       } catch {
         hResp = await fetch(browserApi.runtime.getURL('handles.txt'), { cache: 'no-store' });
@@ -286,8 +304,6 @@ export async function syncCloudHandles(
 }
 
 // ---- XShield additions (kept from our build; not part of 1.4.3) ----
-
-
 
 export type LogLevel = 'info' | 'warn' | 'error';
 

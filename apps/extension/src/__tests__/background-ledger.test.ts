@@ -17,11 +17,15 @@
  * auto-block queue drains through the real AutoBlockManager.process().
  */
 import { describe, expect, it, vi } from 'vitest';
-import { parseScreenNames, isValidScreenName } from '../store/blockerStorage';
+import { parseScreenNames, isValidScreenName, getLocalDateString } from '../store/blockerStorage';
 
 const storageData: Record<string, unknown> = {};
 const messageListeners: Array<
-  (message: Record<string, unknown>, sender: unknown, sendResponse: (res: unknown) => void) => boolean | void
+  (
+    message: Record<string, unknown>,
+    sender: unknown,
+    sendResponse: (res: unknown) => void,
+  ) => boolean | void
 > = [];
 
 /**
@@ -163,7 +167,9 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
       interval: 25,
     });
     const mock = fetchImpl as unknown as { mock: { calls: unknown[][] } };
-    const createCall = mock.mock.calls.find((call) => String(call[0]).includes('blocks/create.json'));
+    const createCall = mock.mock.calls.find((call) =>
+      String(call[0]).includes('blocks/create.json'),
+    );
     expect(createCall).toBeDefined();
     const init = createCall?.[1] as RequestInit;
     expect(String(init.body)).toBe('screen_name=spammer1');
@@ -182,7 +188,9 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
         expect(storageData.blockedUsersOnX).toContain('spammer1');
         // 1.5.1 model: the trigger record is never removed by a block.
         expect(
-          (storageData.blockedHistory as Array<{ id: string }>).some((item) => item.id === 'tweet-1'),
+          (storageData.blockedHistory as Array<{ id: string }>).some(
+            (item) => item.id === 'tweet-1',
+          ),
         ).toBe(true);
       },
       { timeout: 5000, interval: 25 },
@@ -213,7 +221,10 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
     // first item and never touches the second one; the manual block of
     // spammer1 must still go through and purge it from the queue.
     const hangFetch: FetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input).includes('blocks/create.json') && String(init?.body ?? '').includes('stuck1')) {
+      if (
+        String(input).includes('blocks/create.json') &&
+        String(init?.body ?? '').includes('stuck1')
+      ) {
         return new Promise<Response>(() => {});
       }
       return new Response(JSON.stringify({ screen_name: 'spammer1' }), { status: 200 });
@@ -230,10 +241,10 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
 
     // Ledger write implies queue exit: stuck1 is in-flight (shifted), and
     // spammer1 must be gone from the persisted pending queue.
-    await vi.waitFor(
-      () => expect(storageData.autoBlockQueue).toEqual([]),
-      { timeout: 5000, interval: 25 },
-    );
+    await vi.waitFor(() => expect(storageData.autoBlockQueue).toEqual([]), {
+      timeout: 5000,
+      interval: 25,
+    });
     expect(storageData.blockedUsersOnX).toContain('spammer1');
   });
 
@@ -244,10 +255,10 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
       fetchImpl,
     );
 
-    await vi.waitFor(
-      () => expect(storageData.autoBlockQueue).toEqual([]),
-      { timeout: 5000, interval: 25 },
-    );
+    await vi.waitFor(() => expect(storageData.autoBlockQueue).toEqual([]), {
+      timeout: 5000,
+      interval: 25,
+    });
 
     // They were already blocked — no blocks/create.json may ever fire for them.
     const mock = fetchImpl as unknown as { mock: { calls: unknown[][] } };
@@ -267,14 +278,16 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
     manager.graceMinutes = 30;
     await dispatch({ action: 'recordSpam', items: [record('tweet-g1', 'pending1', true)] });
 
-    await vi.waitFor(
-      () => expect(storageData.autoBlockQueue).toContain('pending1'),
-      { timeout: 5000, interval: 25 },
-    );
+    await vi.waitFor(() => expect(storageData.autoBlockQueue).toContain('pending1'), {
+      timeout: 5000,
+      interval: 25,
+    });
     // Still inside the window: nothing blocked yet, no API call.
     await new Promise((r) => setTimeout(r, 300));
     expect(storageData.blockedUsersOnX).toEqual([]);
-    expect((storageData.autoBlockEta as Record<string, number>).pending1).toBeGreaterThan(Date.now());
+    expect((storageData.autoBlockEta as Record<string, number>).pending1).toBeGreaterThan(
+      Date.now(),
+    );
     const mock = fetchImpl as unknown as { mock: { calls: unknown[][] } };
     expect(
       mock.mock.calls.filter((call) => String(call[0]).includes('blocks/create.json')),
@@ -284,36 +297,39 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
     (storageData.autoBlockEta as Record<string, number>).pending1 = Date.now() - 1;
     await manager.process();
 
-    await vi.waitFor(
-      () => expect(storageData.blockedUsersOnX).toContain('pending1'),
-      { timeout: 5000, interval: 25 },
-    );
+    await vi.waitFor(() => expect(storageData.blockedUsersOnX).toContain('pending1'), {
+      timeout: 5000,
+      interval: 25,
+    });
     expect(storageData.autoBlockQueue).toEqual([]);
 
     // Deleting the last record of a queued user cancels their pending block.
     await dispatch({ action: 'recordSpam', items: [record('tweet-g2', 'pending2', true)] });
     await vi.waitFor(
-      () => expect(storageData.blockedHistory).toContainEqual(expect.objectContaining({ id: 'tweet-g2' })),
+      () =>
+        expect(storageData.blockedHistory).toContainEqual(
+          expect.objectContaining({ id: 'tweet-g2' }),
+        ),
       { timeout: 5000, interval: 25 },
     );
     await dispatch({ action: 'removeSpamRecord', id: 'tweet-g2' });
-    await vi.waitFor(
-      () => expect(storageData.autoBlockQueue).not.toContain('pending2'),
-      { timeout: 5000, interval: 25 },
-    );
+    await vi.waitFor(() => expect(storageData.autoBlockQueue).not.toContain('pending2'), {
+      timeout: 5000,
+      interval: 25,
+    });
     expect(storageData.blockedUsersOnX).not.toContain('pending2');
 
     // Whitelisting a queued user also cancels their pending entry.
     await dispatch({ action: 'recordSpam', items: [record('tweet-g3', 'pending3', true)] });
-    await vi.waitFor(
-      () => expect(storageData.autoBlockQueue).toContain('pending3'),
-      { timeout: 5000, interval: 25 },
-    );
+    await vi.waitFor(() => expect(storageData.autoBlockQueue).toContain('pending3'), {
+      timeout: 5000,
+      interval: 25,
+    });
     await manager.purgeWhitelistedFromQueue(['pending3']);
-    await vi.waitFor(
-      () => expect(storageData.autoBlockQueue).not.toContain('pending3'),
-      { timeout: 5000, interval: 25 },
-    );
+    await vi.waitFor(() => expect(storageData.autoBlockQueue).not.toContain('pending3'), {
+      timeout: 5000,
+      interval: 25,
+    });
     expect(storageData.blockedUsersOnX).not.toContain('pending3');
   }, 20000);
 
@@ -324,18 +340,18 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
     manager.graceMinutes = 30;
 
     await dispatch({ action: 'recordSpam', items: [record('tweet-a1', 'accel1', true)] });
-    await vi.waitFor(
-      () => expect(storageData.autoBlockQueue).toContain('accel1'),
-      { timeout: 5000, interval: 25 },
-    );
+    await vi.waitFor(() => expect(storageData.autoBlockQueue).toContain('accel1'), {
+      timeout: 5000,
+      interval: 25,
+    });
     expect((storageData.autoBlockEta as Record<string, number>).accel1).toBeGreaterThan(Date.now());
 
     // Bulk confirm skips the grace window for users already pending.
     await dispatch({ action: 'blockAllHistoryUsers', users: ['accel1'] });
-    await vi.waitFor(
-      () => expect(storageData.blockedUsersOnX).toContain('accel1'),
-      { timeout: 5000, interval: 25 },
-    );
+    await vi.waitFor(() => expect(storageData.blockedUsersOnX).toContain('accel1'), {
+      timeout: 5000,
+      interval: 25,
+    });
     expect(storageData.autoBlockQueue).toEqual([]);
   });
 
@@ -346,10 +362,10 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
     manager.graceMinutes = 30;
 
     await dispatch({ action: 'recordSpam', items: [record('tweet-s1', 'stale1', true)] });
-    await vi.waitFor(
-      () => expect(storageData.autoBlockQueue).toContain('stale1'),
-      { timeout: 5000, interval: 25 },
-    );
+    await vi.waitFor(() => expect(storageData.autoBlockQueue).toContain('stale1'), {
+      timeout: 5000,
+      interval: 25,
+    });
     // The stale (expired) eta must NOT let the new trigger fire immediately.
     await new Promise((r) => setTimeout(r, 300));
     expect(storageData.blockedUsersOnX).toEqual([]);
@@ -362,10 +378,10 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
       autoBlockEta: { future1: Date.now() + 3_600_000 },
     });
 
-    await vi.waitFor(
-      () => expect(storageData.blockedUsersOnX).toContain('ready1'),
-      { timeout: 5000, interval: 25 },
-    );
+    await vi.waitFor(() => expect(storageData.blockedUsersOnX).toContain('ready1'), {
+      timeout: 5000,
+      interval: 25,
+    });
     expect(storageData.autoBlockQueue).toEqual(['future1']);
     expect(storageData.blockedUsersOnX).not.toContain('future1');
   });
@@ -396,10 +412,10 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
 
     // Deleting the last record cancels the pending entry.
     await dispatch({ action: 'removeSpamRecord', id: 'tweet-d2' });
-    await vi.waitFor(
-      () => expect(storageData.autoBlockQueue).not.toContain('dupe1'),
-      { timeout: 5000, interval: 25 },
-    );
+    await vi.waitFor(() => expect(storageData.autoBlockQueue).not.toContain('dupe1'), {
+      timeout: 5000,
+      interval: 25,
+    });
   });
 
   it('restart persistence: a persisted queue with expired etas drains on worker wake', async () => {
@@ -407,10 +423,10 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
       autoBlockQueue: ['old1'],
       autoBlockEta: { old1: Date.now() - 1 },
     });
-    await vi.waitFor(
-      () => expect(storageData.blockedUsersOnX).toContain('old1'),
-      { timeout: 5000, interval: 25 },
-    );
+    await vi.waitFor(() => expect(storageData.blockedUsersOnX).toContain('old1'), {
+      timeout: 5000,
+      interval: 25,
+    });
     expect(storageData.autoBlockQueue).toEqual([]);
   });
 
@@ -426,10 +442,10 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
       autoBlockGraceMinutes: 30,
     });
 
-    await vi.waitFor(
-      () => expect(storageData.autoBlockQueue).toContain('back1'),
-      { timeout: 5000, interval: 25 },
-    );
+    await vi.waitFor(() => expect(storageData.autoBlockQueue).toContain('back1'), {
+      timeout: 5000,
+      interval: 25,
+    });
     // Ledger member: stays blocked, never re-queued. Whitelisted: stays free.
     expect(storageData.autoBlockQueue).not.toContain('back2');
     expect(storageData.autoBlockQueue).not.toContain('back3');
@@ -445,13 +461,18 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
         if (init?.method === 'PUT') {
           return new Response(JSON.stringify({ ok: true }), { status: 200 });
         }
-        return new Response(JSON.stringify({ sha: 'abc123', content: 'c3BhbW1lcjE=' }), { status: 200 }); // base64: spammer1
+        return new Response(JSON.stringify({ sha: 'abc123', content: 'c3BhbW1lcjE=' }), {
+          status: 200,
+        }); // base64: spammer1
       }
       throw new Error(`unexpected fetch: ${url}`);
     }) as unknown as FetchImpl;
     await bootstrap({ githubToken: 'tok', blockedUsersOnX: ['spammer1', 'spammer2'] }, fetchImpl);
 
-    const res = (await dispatch({ action: 'shareHandles' })) as { success?: boolean; total?: number };
+    const res = (await dispatch({ action: 'shareHandles' })) as {
+      success?: boolean;
+      total?: number;
+    };
     expect(res?.success).toBe(true);
     expect(res?.total).toBe(2); // existing spammer1 + local spammer2, deduped
 
@@ -487,7 +508,10 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
       fetchImpl,
     );
 
-    const res = (await dispatch({ action: 'shareKeywords' })) as { success?: boolean; total?: number };
+    const res = (await dispatch({ action: 'shareKeywords' })) as {
+      success?: boolean;
+      total?: number;
+    };
     expect(res?.success).toBe(true);
     expect(res?.total).toBe(3); // 云端词一 + 自定义词三 + /正则四/i（禁用词剔除）
 
@@ -504,14 +528,20 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
 
   it('shareKeywords without a token fails with a clear reason', async () => {
     await bootstrap();
-    const res = (await dispatch({ action: 'shareKeywords' })) as { success?: boolean; reason?: string };
+    const res = (await dispatch({ action: 'shareKeywords' })) as {
+      success?: boolean;
+      reason?: string;
+    };
     expect(res?.success).toBe(false);
     expect(res?.reason).toContain('Token');
   });
 
   it('shareHandles without a token fails with a clear reason', async () => {
     await bootstrap();
-    const res = (await dispatch({ action: 'shareHandles' })) as { success?: boolean; reason?: string };
+    const res = (await dispatch({ action: 'shareHandles' })) as {
+      success?: boolean;
+      reason?: string;
+    };
     expect(res?.success).toBe(false);
     expect(res?.reason).toContain('Token');
   });
@@ -527,12 +557,25 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
 
     await bg.feedCommunityHandles();
     try {
-      await vi.waitFor(
-        () => expect(storageData.autoBlockQueue).toContain('cshare1'),
-        { timeout: 4500, interval: 25 },
-      );
+      await vi.waitFor(() => expect(storageData.autoBlockQueue).toContain('cshare1'), {
+        timeout: 4500,
+        interval: 25,
+      });
     } catch (error) {
-      console.log('DBG state: q=', JSON.stringify(storageData.autoBlockQueue), 'eta=', JSON.stringify(storageData.autoBlockEta), 'hist=', JSON.stringify((storageData.blockedHistory as Array<{id:string}> ?? []).map((x) => x.id)), 'ledger=', JSON.stringify(storageData.blockedUsersOnX), 'dismissed=', JSON.stringify(storageData.communityDismissed));
+      console.log(
+        'DBG state: q=',
+        JSON.stringify(storageData.autoBlockQueue),
+        'eta=',
+        JSON.stringify(storageData.autoBlockEta),
+        'hist=',
+        JSON.stringify(
+          ((storageData.blockedHistory as Array<{ id: string }>) ?? []).map((x) => x.id),
+        ),
+        'ledger=',
+        JSON.stringify(storageData.blockedUsersOnX),
+        'dismissed=',
+        JSON.stringify(storageData.communityDismissed),
+      );
       throw error;
     }
     expect(storageData.autoBlockQueue).not.toContain('cshare2');
@@ -546,7 +589,6 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
       { timeout: 5000, interval: 25 },
     );
     expect(storageData.blockedUsersOnX).toEqual([]);
-
   }, 12000);
 
   it('deleting a community record opts the handle out of future feeding', async () => {
@@ -557,15 +599,15 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
     });
     const bg = await import('../background/index');
     await bg.feedCommunityHandles();
-    await vi.waitFor(
-      () => expect(storageData.autoBlockQueue).toContain('copt1'),
-      { timeout: 5000, interval: 25 },
-    );
+    await vi.waitFor(() => expect(storageData.autoBlockQueue).toContain('copt1'), {
+      timeout: 5000,
+      interval: 25,
+    });
     await dispatch({ action: 'removeSpamRecord', id: 'community:copt1' });
-    await vi.waitFor(
-      () => expect((storageData.communityDismissed as string[])).toContain('copt1'),
-      { timeout: 5000, interval: 25 },
-    );
+    await vi.waitFor(() => expect(storageData.communityDismissed as string[]).toContain('copt1'), {
+      timeout: 5000,
+      interval: 25,
+    });
     await bg.feedCommunityHandles();
     await new Promise((r) => setTimeout(r, 200));
     expect(storageData.autoBlockQueue).toEqual([]);
@@ -581,19 +623,19 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
     });
     const bg = await import('../background/index');
     await bg.feedCommunityHandles();
-    await vi.waitFor(
-      () => expect(storageData.autoBlockQueue).toContain('loop1'),
-      { timeout: 5000, interval: 25 },
-    );
+    await vi.waitFor(() => expect(storageData.autoBlockQueue).toContain('loop1'), {
+      timeout: 5000,
+      interval: 25,
+    });
     // Block on X — ledger write AND permanent community opt-out.
     const blockRes = (await dispatch({ action: 'blockUserOnX', screenName: 'loop1' })) as {
       success?: boolean;
     };
     expect(blockRes?.success).toBe(true);
-    await vi.waitFor(
-      () => expect((storageData.communityDismissed as string[])).toContain('loop1'),
-      { timeout: 5000, interval: 25 },
-    );
+    await vi.waitFor(() => expect(storageData.communityDismissed as string[]).toContain('loop1'), {
+      timeout: 5000,
+      interval: 25,
+    });
     // Unblock: ledger drops it, but the dismissal keeps the feeder away.
     const unblockRes = (await dispatch({ action: 'unblockUserOnX', screenName: 'loop1' })) as {
       success?: boolean;
@@ -625,22 +667,30 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
   });
 
   it('whitelist update instantly purges queued members from the pending queue', async () => {
-    await bootstrap({ autoBlockQueue: ['wl1', 'keep1'] });
+    await bootstrap({
+      autoBlockQueue: ['wl1', 'keep1'],
+      // Deterministic drain: wl1 is ready, keep1 sits far in the future so a
+      // concurrent drain can never process it before the whitelist purge.
+      autoBlockEta: { wl1: Date.now() - 1, keep1: Date.now() + 3_600_000 },
+    });
     const { autoBlockManager } = await import('../background/index');
     await autoBlockManager.purgeWhitelistedFromQueue(['wl1']);
-    await vi.waitFor(
-      () => expect(storageData.autoBlockQueue).toEqual(['keep1']),
-      { timeout: 5000, interval: 25 },
-    );
+    await vi.waitFor(() => expect(storageData.autoBlockQueue).toEqual(['keep1']), {
+      timeout: 5000,
+      interval: 25,
+    });
   });
 
   it('permanent failure (code 63, account suspended): ledger untouched, item dropped', async () => {
     const suspendedFetch: FetchImpl = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes('blocks/create.json')) {
-        return new Response(JSON.stringify({ errors: [{ code: 63, message: 'User has been suspended.' }] }), {
-          status: 200,
-        });
+        return new Response(
+          JSON.stringify({ errors: [{ code: 63, message: 'User has been suspended.' }] }),
+          {
+            status: 200,
+          },
+        );
       }
       throw new Error(`unexpected fetch: ${url}`);
     }) as unknown as FetchImpl;
@@ -654,7 +704,9 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
         expect(storageData.autoBlockToday).toBe(0);
         // Record flushed (50 ms batch) and never removed by the failed block.
         expect(
-          (storageData.blockedHistory as Array<{ id: string }>).some((item) => item.id === 'tweet-2'),
+          (storageData.blockedHistory as Array<{ id: string }>).some(
+            (item) => item.id === 'tweet-2',
+          ),
         ).toBe(true);
       },
       { timeout: 5000, interval: 25 },
@@ -769,7 +821,10 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
       autoBlockEta: { a1: farFuture, a2: farFuture, b1: farFuture },
       autoBlockGraceMinutes: 30,
     });
-    const res = (await dispatch({ action: 'removeFromQueue', names: ['a1', 'a2', '@missing'] })) as {
+    const res = (await dispatch({
+      action: 'removeFromQueue',
+      names: ['a1', 'a2', '@missing'],
+    })) as {
       success?: boolean;
     };
     expect(res?.success).toBe(true);
@@ -845,9 +900,17 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
 
   it('bulkRemoveRecords explicit ids deletes exactly those records', async () => {
     await bootstrap({
-      blockedHistory: [record('r1', 'user1', true), record('r2', 'user2', true), record('r3', 'user3', true)],
+      blockedHistory: [
+        record('r1', 'user1', true),
+        record('r2', 'user2', true),
+        record('r3', 'user3', true),
+      ],
       autoBlockQueue: ['user1', 'user2', 'user3'],
-      autoBlockEta: { user1: Date.now() + 3_600_000, user2: Date.now() + 3_600_000, user3: Date.now() + 3_600_000 },
+      autoBlockEta: {
+        user1: Date.now() + 3_600_000,
+        user2: Date.now() + 3_600_000,
+        user3: Date.now() + 3_600_000,
+      },
       autoBlockGraceMinutes: 30,
     });
     const hist0 = storageData.blockedHistory as Array<{ id: string; time: number }>;
@@ -864,10 +927,16 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
 
   it('share gate: uploads are refused when shareEnabled is off', async () => {
     await bootstrap({ shareEnabled: false, githubToken: 'tok', blockedUsersOnX: ['u1'] });
-    const kw = (await dispatch({ action: 'shareKeywords' })) as { success?: boolean; reason?: string };
+    const kw = (await dispatch({ action: 'shareKeywords' })) as {
+      success?: boolean;
+      reason?: string;
+    };
     expect(kw?.success).toBe(false);
     expect(kw?.reason ?? '').toContain('未启用');
-    const hd = (await dispatch({ action: 'shareHandles' })) as { success?: boolean; reason?: string };
+    const hd = (await dispatch({ action: 'shareHandles' })) as {
+      success?: boolean;
+      reason?: string;
+    };
     expect(hd?.success).toBe(false);
     expect(hd?.reason ?? '').toContain('未启用');
   });
@@ -931,5 +1000,81 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
     expect(res?.success).toBe(false);
     expect(res?.permanent).toBe(true);
     expect(res?.reason ?? '').toContain('身份凭证');
+  });
+
+  it('runtime stats: every successful block bumps the cumulative and per-day counters', async () => {
+    await bootstrap();
+    // Auto path (grace 0 in tests): keyword hit → drain executes the block.
+    await dispatch({ action: 'recordSpam', items: [record('tweet-rs1', 'stat1', true)] });
+    await vi.waitFor(() => expect(storageData.statsTotalBlocks).toBe(1), {
+      timeout: 5000,
+      interval: 25,
+    });
+    expect(storageData.statsTriggers).toBe(1);
+    const today = getLocalDateString();
+    expect((storageData.statsBlocksByDay as Record<string, number>)[today]).toBe(1);
+    // Manual one-click path bumps the same counters.
+    await dispatch({ action: 'blockUserOnX', screenName: 'stat2' });
+    await vi.waitFor(() => expect(storageData.statsTotalBlocks).toBe(2), {
+      timeout: 5000,
+      interval: 25,
+    });
+    expect((storageData.statsBlocksByDay as Record<string, number>)[today]).toBe(2);
+  });
+
+  it('runtime stats migration: pre-1.3.0 ledger seeds the counters exactly once', async () => {
+    const ts1 = Date.now() - 2 * 86_400_000;
+    const ts2 = Date.now() - 1 * 86_400_000;
+    await bootstrap({
+      blockedUsersOnX: ['old1', 'old2', 'old3'],
+      blockedAt: { old1: ts1, old2: ts1, old3: ts2 },
+    });
+    // The migration promise runs at worker import; wait for it to land.
+    await vi.waitFor(() => expect(storageData.statsMigrated).toBe(true), {
+      timeout: 5000,
+      interval: 25,
+    });
+    expect(storageData.statsTotalBlocks).toBe(3);
+    expect(
+      (storageData.statsBlocksByDay as Record<string, number>)[getLocalDateString(new Date(ts1))],
+    ).toBe(2);
+    expect(
+      (storageData.statsBlocksByDay as Record<string, number>)[getLocalDateString(new Date(ts2))],
+    ).toBe(1);
+    // A block after migration increments — it must not reseed or double count.
+    await dispatch({ action: 'blockUserOnX', screenName: 'new1' });
+    await vi.waitFor(() => expect(storageData.statsTotalBlocks).toBe(4), {
+      timeout: 5000,
+      interval: 25,
+    });
+    expect((storageData.statsBlocksByDay as Record<string, number>)[getLocalDateString()]).toBe(1);
+    expect(storageData.statsTriggers).toBe(0);
+  });
+
+  it('runtime stats: trigger count is monotonic — deleting records does not subtract', async () => {
+    await bootstrap();
+    await dispatch({
+      action: 'recordSpam',
+      items: [record('tweet-rm1', 'trig1', true), record('tweet-rm2', 'trig2', true)],
+    });
+    await vi.waitFor(() => expect(storageData.statsTriggers).toBe(2), {
+      timeout: 5000,
+      interval: 25,
+    });
+    await dispatch({ action: 'removeSpamRecord', id: 'tweet-rm1' });
+    await new Promise((r) => setTimeout(r, 120));
+    expect(storageData.statsTriggers).toBe(2);
+  });
+
+  it('reportCurrentUser stores the detected account and seen time', async () => {
+    await bootstrap();
+    const res = (await dispatch({
+      action: 'reportCurrentUser',
+      username: '@NewUser_1',
+      seenAt: 1_234_567_890,
+    })) as { success?: boolean };
+    expect(res?.success).toBe(true);
+    expect(storageData.currentUsername).toBe('newuser_1');
+    expect(storageData.currentUserSeenAt).toBe(1_234_567_890);
   });
 });

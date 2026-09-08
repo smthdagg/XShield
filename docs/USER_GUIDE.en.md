@@ -85,14 +85,14 @@ Add/remove manually. Whitelisted users are never triggered, never queued, and in
 
 ## 4. Auto-blocking & rate control
 
-Default pacing (adjustable on the 触发记录 page): 300/day, batches of 30 (15-min pause after each), 5 s ± 5 s random interval, 429 pauses 15 minutes, transient failures retried 5 times with exponential backoff, suspended/deleted accounts dropped immediately.
+Default pacing (adjustable on the 触发记录 page; deliberately human-like rather than a fixed tick): 20/day, batches of 5 (random 20–60 min pause after each), randomized per-block gaps around a 90 s baseline with frequent 3–12 min pauses, 429 cooldown randomized 60–180 minutes, transient failures retried up to 5 times with jittered exponential backoff, suspended/deleted accounts dropped immediately.
 
 Notes:
 
 - Blocks use your current Chrome X session — identical to blocking manually on the web
 - The queue is deduplicated **by user**: however many times a user triggers, they are processed once
 - Records are kept **per tweet**: multiple spam tweets from one user produce multiple records (evidence), without re-queueing
-- X publishes no official block-rate limits; the defaults are conservative heuristics. Aged accounts can relax them (e.g. 3 s interval, 500/day); new accounts should keep the defaults
+- X publishes no official block-rate limits; the defaults are deliberately conservative. Older, well-established accounts may relax them somewhat (e.g. 60 s baseline, 100/day), but keep the randomized human-like gaps — a fixed fast tick is exactly what anti-automation flags.
 
 ---
 

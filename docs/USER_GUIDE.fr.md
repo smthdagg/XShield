@@ -25,7 +25,7 @@ Une seule bibliothèque de mots-clés (cloud + personnalisé local).
 
 ## Limitation (réglable sur la page des enregistrements)
 
-300/jour (réglable), lots de 30 (réglable, pause de 15 min), intervalle 5 s ±5 s (réglable), pause 15 min sur 429.
+20/jour (réglable), lots de 5 (réglable, pause aléatoire de 20 à 60 min), intervalle de base 90 s avec variation aléatoire (incluant des pauses longues de 3 à 12 min), refroidissement aléatoire de 60 à 180 min sur 429. Le rythme est volontairement humain, pas mécanique.
 
 ## Liste noire communautaire
 

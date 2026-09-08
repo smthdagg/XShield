@@ -294,12 +294,47 @@ const FAILURE_RETRY_HOURS = 24;
 /** Buffer between a keyword trigger and its automatic block execution. */
 const AUTO_BLOCK_GRACE_MINUTES = 30;
 
+/**
+ * Conservative pacing: the defaults and the randomizers below are
+ * deliberately non-mechanical — a fixed 5 s tick across hundreds of blocks a
+ * day is exactly the rhythm X's anti-automation flags. Every gap is drawn
+ * from a wide band and occasionally jumps to a multi-minute "stepped away"
+ * pause, so no two blocks land on a recognizable schedule.
+ */
+function randomBetweenMs(minMs: number, maxMs: number): number {
+  return minMs + Math.floor(Math.random() * (maxMs - minMs + 1));
+}
+
+/** Inter-block gap: wide band around the baseline, ~1 in 6 blocks gets a
+ *  much longer break (3–12 min). */
+function getDynamicGapMs(baseMs: number, maxMs: number): number {
+  const gap = randomBetweenMs(baseMs, maxMs);
+  const LONG_GAP_PROBABILITY = 0.16;
+  if (Math.random() < LONG_GAP_PROBABILITY) {
+    return gap + randomBetweenMs(3 * 60_000, 12 * 60_000);
+  }
+  return gap;
+}
+
+/** Inter-batch pause: 20–60 min, randomized. */
+function getBatchPauseMs(): number {
+  return randomBetweenMs(20 * 60_000, 60 * 60_000);
+}
+
+/** Rate-limited (429) cooldown: 60–180 min — a rate limit is the loudest
+ *  automation signal X sends back, so the response is extra slow. */
+function getRateLimitPauseMs(): number {
+  return randomBetweenMs(60 * 60_000, 180 * 60_000);
+}
+
 class AutoBlockManager {
   isProcessing = false;
-  dailyLimit = 300;
-  batchLimit = 30;
-  minDelayMs = 5000;
-  maxDelayMs = 10000;
+  /** Conservative defaults; users may raise them in the panel. */
+  dailyLimit = 20;
+  batchLimit = 5;
+  /** Baseline gap band: default 90 s at least, up to 3x. */
+  minDelayMs = 90_000;
+  maxDelayMs = 270_000;
 
   /** Buffer between trigger and execution; tests may shorten it. */
   graceMinutes = AUTO_BLOCK_GRACE_MINUTES;
@@ -353,11 +388,11 @@ class AutoBlockManager {
     this.queue = (items.autoBlockQueue as string[]) ?? [];
     this.eta = (items.autoBlockEta as Record<string, number>) ?? {};
     this.graceMinutes = (items.autoBlockGraceMinutes as number) ?? 30;
-    this.dailyLimit = Math.max(1, (items.autoBlockDailyLimit as number) ?? 300);
-    this.batchLimit = Math.max(1, (items.autoBlockBatchLimit as number) ?? 30);
-    const delaySeconds = Math.max(0, (items.autoBlockDelaySeconds as number) ?? 5);
+    this.dailyLimit = Math.max(1, (items.autoBlockDailyLimit as number) ?? 20);
+    this.batchLimit = Math.max(1, (items.autoBlockBatchLimit as number) ?? 5);
+    const delaySeconds = Math.max(0, (items.autoBlockDelaySeconds as number) ?? 90);
     this.minDelayMs = delaySeconds * 1000;
-    this.maxDelayMs = delaySeconds * 1000 + 5000;
+    this.maxDelayMs = this.minDelayMs * 3;
     this.countToday = (items.autoBlockToday as number) ?? 0;
     this.lastDate = (items.autoBlockLastDate as string) ?? '';
     this.pausedUntil = (items.autoBlockPausedUntil as number) ?? 0;
@@ -565,19 +600,21 @@ class AutoBlockManager {
 
           if (this.countToday >= this.dailyLimit) {
             console.warn('[X-Blocker] Auto block daily limit reached.');
-            void addLog('warn', 'block', '自动拉黑已达每日上限（300），明天继续');
+            void addLog('warn', 'block', `自动拉黑已达每日上限（${this.dailyLimit}），明天继续`);
             break;
           }
 
           if (this.batchCount >= this.batchLimit) {
-            console.warn('[X-Blocker] Auto block batch limit reached. Pausing for 15 mins.');
-            this.pausedUntil = Date.now() + 15 * 60 * 1000;
+            const batchPauseMs = getBatchPauseMs();
+            const pauseMinutes = Math.round(batchPauseMs / 60_000);
+            console.warn(`[X-Blocker] Auto block batch limit reached. Pausing for ${pauseMinutes} mins.`);
+            this.pausedUntil = Date.now() + batchPauseMs;
             this.batchCount = 0;
             await this.saveState({
               autoBlockPausedUntil: this.pausedUntil,
               autoBlockBatchCount: this.batchCount,
             });
-            void addLog('info', 'block', '一批（30 个）执行完成，暂停 15 分钟');
+            void addLog('info', 'block', `一批（${this.batchLimit} 个）执行完成，随机暂停约 ${pauseMinutes} 分钟`);
             break;
           }
 
@@ -611,7 +648,7 @@ class AutoBlockManager {
               outcome = 'success';
             } else if (res?.status === 429) {
               outcome = 'rate-limited';
-              pauseUntil = Date.now() + 15 * 60 * 1000;
+              pauseUntil = Date.now() + getRateLimitPauseMs();
             } else if (res?.permanent || (res?.status && res.status >= 400 && res.status < 500)) {
               outcome = 'failed';
               failReason = res?.reason ?? 'unknown';
@@ -640,7 +677,8 @@ class AutoBlockManager {
             });
             void addLog('info', 'block', `已拉黑 @${currentItem}（今日第 ${this.countToday} 个）`);
           } else if (outcome === 'rate-limited') {
-            console.warn('[X-Blocker] API rate limited (429). Pausing auto block for 15 mins.');
+            const cooldownMinutes = Math.max(1, Math.round((pauseUntil - Date.now()) / 60_000));
+            console.warn(`[X-Blocker] API rate limited (429). Pausing auto block for ${cooldownMinutes} mins.`);
             this.queue.unshift(currentItem);
             this.pausedUntil = pauseUntil;
             this.batchCount = 0;
@@ -649,7 +687,7 @@ class AutoBlockManager {
               autoBlockPausedUntil: this.pausedUntil,
               autoBlockBatchCount: this.batchCount,
             });
-            void addLog('warn', 'block', '触发 X 限流（429），暂停 15 分钟');
+            void addLog('warn', 'block', `触发 X 限流（429），随机暂停约 ${cooldownMinutes} 分钟`);
             break;
           } else if (outcome === 'transient') {
             const attempts = (this.retryCounts.get(currentItem) ?? 0) + 1;
@@ -670,9 +708,13 @@ class AutoBlockManager {
               );
               this.queue.push(currentItem);
               await this.saveState({ autoBlockQueue: this.queue });
-              await new Promise((r) =>
-                setTimeout(r, Math.min(30_000, 5_000 * 2 ** (attempts - 1))),
+              // Jittered exponential backoff (up to 5 min) — a deterministic
+              // 2^n wait is another recognizable automation rhythm.
+              const backoffMs = Math.min(
+                5 * 60_000,
+                5_000 * 2 ** (attempts - 1) * (0.5 + Math.random() * 0.5),
               );
+              await new Promise((r) => setTimeout(r, backoffMs));
             }
           } else {
             this.retryCounts.delete(currentItem);
@@ -685,9 +727,10 @@ class AutoBlockManager {
           }
 
           if (this.queue.length > 0) {
-            const delay =
-              Math.floor(Math.random() * (this.maxDelayMs - this.minDelayMs + 1)) + this.minDelayMs;
-            await new Promise((r) => setTimeout(r, delay));
+            // Human-like gap: random band around the baseline, with frequent
+            // longer pauses — never a fixed seconds tick.
+            const gapMs = getDynamicGapMs(this.minDelayMs, this.maxDelayMs);
+            await new Promise((r) => setTimeout(r, gapMs));
           }
         }
       } catch (e) {

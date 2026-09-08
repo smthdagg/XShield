@@ -684,7 +684,7 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
     expect(storageData.blockedUsersOnX).toEqual([]);
   });
 
-  it('rate limit (HTTP 429): item unshifted to the queue front, auto-block paused 15 min', async () => {
+  it('rate limit (HTTP 429): item unshifted to the queue front, auto-block pauses on a randomized cooldown', async () => {
     const limitedFetch: FetchImpl = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes('blocks/create.json')) {

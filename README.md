@@ -65,7 +65,7 @@ pnpm build        # 产物：apps/extension/dist
 
 **同步说明**：无自动同步。规则（keywords.txt）在「规则与同步」页手动同步/共享；黑名单（handles.txt）在「总设置 → 同步与共享」手动同步/共享；两者共用同一个仓库源（默认 `smthdagg/XShield-keywords`，可在总设置修改）。每次同步/共享/删除都会写入本地日志（「日志」页可查可导出）。
 
-**自动拉黑节奏**（触发记录页可调，默认保守）：每日 300 个、每批 30 个（批后歇 15 分钟）、单次间隔 5 秒。X 没有官方限制文档，请按自己账号权重调整。**手动确认的拉黑优先执行**（排在队列最前）。
+**自动拉黑节奏**（触发记录页可调，默认保守）：每日 20 个、每批 5 个（批后随机歇 20–60 分钟）、单次间隔随机化（基线 90 秒，常夹带 3–12 分钟的长停顿；触发限流后冷却 60–180 分钟）。节奏刻意做成类人模式而非机械节拍，降低被 X 反自动化系统识别为脚本的风险。X 没有官方限制文档，请按自己账号权重调整。**手动确认的拉黑优先执行**（排在队列最前）。
 
 **拉黑失败怎么办**：打开 x.com 并保持登录（拉黑依赖 X 会话）；失败的用户 24 小时内不会自动重试，日志页可查看原因；手动「拉黑列表」可随时显式重试。
 
@@ -144,7 +144,7 @@ Then load `apps/extension/dist` (steps 3–4 of Option A). Building requires Nod
 
 **Sync is manual** — there is no auto-sync. Rules (`keywords.txt`) sync/share on the Rules & sync page; the blacklist (`handles.txt`) sync/share under Settings → Sync & share; both share one repo source (default `smthdagg/XShield-keywords`). Every sync, share and deletion is written to the local log (Logs page, exportable).
 
-**Block pacing** (adjustable, conservative defaults): 300/day, batches of 30 (15-min pause after each), 5 s interval. X publishes no official limits — tune to your account's age and weight. Manually confirmed blocks jump the queue.
+**Block pacing** (adjustable, conservative defaults): 20/day, batches of 5 (random 20–60 min pause after each), randomized per-block gaps around a 90 s baseline with frequent longer pauses (3–12 min), and a 60–180 min cooldown when X rate-limits (429). The pacing is deliberately human-like rather than a fixed tick, to reduce the chance X's anti-automation flags it as a script. X publishes no official limits — tune to your account's age and weight. Manually confirmed blocks jump the queue.
 
 **Block failures**: open x.com and stay logged in (blocking needs an X session); failed users are not auto-retried for 24 hours — see the Logs page for reasons; the manual 拉黑列表 button always retries explicitly.
 

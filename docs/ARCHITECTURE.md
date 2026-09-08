@@ -36,7 +36,9 @@ background service worker (single writer for history & ledger)
     pick first queue entry whose eta expired (pop-first, crash-safe)
     → whitelist/ledger chokepoint → POST blocks/create.json (screen_name)
     → success: ledger += user, blockedAt[user] = now, queue -= user
-    → pacing: batch 30 → 15-min pause; interval N ± 5 s; daily cap; 429 pause
+    → pacing: batch 5 → random 20–60 min pause; randomized (human-like) gaps
+      around a 90 s baseline (frequent 3–12 min pauses); daily cap 20; 429 pause
+      randomized 60–180 min
   feedCommunityHandles: shared handles.txt backlog feeds the queue in batches
   purge paths: ledger members removed at refresh/shift/ledger-write;
                whitelist changes purge via storage.onChanged;

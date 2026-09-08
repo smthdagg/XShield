@@ -73,9 +73,9 @@ const DEFAULTS: Record<string, unknown> = {
   communityHandles: [] as string[],
   communityDismissed: [] as string[],
   githubToken: '',
-  autoBlockDailyLimit: 300,
-  autoBlockBatchLimit: 30,
-  autoBlockDelaySeconds: 5,
+  autoBlockDailyLimit: 20,
+  autoBlockBatchLimit: 5,
+  autoBlockDelaySeconds: 90,
   blockedUsersOnX: [] as string[],
   blockedAt: {} as Record<string, number>,
   lastSyncTime: 0,
@@ -344,7 +344,7 @@ export default function Dashboard() {
       // leave this working list as soon as the queue write lands (排队中
       // filter); the ledger moves them to 已拉黑 as each block succeeds.
       setStatus(
-        `${t.queuedNote.replace('{count}', String(names.length))} · ${t.autoBlockToday}: ${String(state.autoBlockToday ?? 0)}/${String(state.autoBlockDailyLimit ?? 300)}`,
+        `${t.queuedNote.replace('{count}', String(names.length))} · ${t.autoBlockToday}: ${String(state.autoBlockToday ?? 0)}/${String(state.autoBlockDailyLimit ?? 20)}`,
       );
       setSelectedIds([]);
     });
@@ -802,8 +802,8 @@ export default function Dashboard() {
                   type="number"
                   min={1}
                   max={1000}
-                  value={String(state.autoBlockDailyLimit ?? 300)}
-                  onChange={(e) => setValue('autoBlockDailyLimit', Math.max(1, Number(e.currentTarget.value) || 300))}
+                  value={String(state.autoBlockDailyLimit ?? 20)}
+                  onChange={(e) => setValue('autoBlockDailyLimit', Math.max(1, Number(e.currentTarget.value) || 20))}
                 />
               </label>
               <label>
@@ -812,8 +812,8 @@ export default function Dashboard() {
                   type="number"
                   min={1}
                   max={200}
-                  value={String(state.autoBlockBatchLimit ?? 30)}
-                  onChange={(e) => setValue('autoBlockBatchLimit', Math.max(1, Number(e.currentTarget.value) || 30))}
+                  value={String(state.autoBlockBatchLimit ?? 5)}
+                  onChange={(e) => setValue('autoBlockBatchLimit', Math.max(1, Number(e.currentTarget.value) || 5))}
                 />
               </label>
               <label>
@@ -822,7 +822,7 @@ export default function Dashboard() {
                   type="number"
                   min={0}
                   max={600}
-                  value={String(state.autoBlockDelaySeconds ?? 5)}
+                  value={String(state.autoBlockDelaySeconds ?? 90)}
                   onChange={(e) => setValue('autoBlockDelaySeconds', Math.max(0, Number(e.currentTarget.value) || 0))}
                 />
               </label>

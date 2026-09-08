@@ -13,6 +13,13 @@
 - **展示**：总设置页顶部新增「运行状态」卡片；侧栏新增「状态与日志」页（原隐藏的日志页正式进入导航，页顶叠加同一份统计）。
 - 三语文案同步；新增迁移/计数/上报/渲染测试（48 项全部通过）。
 
+### 重构清理（ponytail-audit 执行）
+
+- 删除零引用的 `packages/` workspace 层（shared / rule-engine / search-engine / block-executor，共 21 文件）与 `@xshield/*` 路径别名、`types/index.ts` 消息协议类型（71 行，零引用）。
+- 移除从未渲染的 `blockedCount` 计数器机制（后台 6 处维护代码 + 存储键 + 3 条 i18n 键）与 `historyFilterReason` 死配置键。
+- 项目元信息占位值落实：Sponsors 链接指向真实账号（`smthdagg`）、`FUNDING.yml`/`SPONSORSHIP.md` 同步、`SECURITY.md` 改为 GitHub Advisory/Issues 报告通道、移除 `securityEmail` 占位字段；`pnpm-lock.yaml` 重生成（单 importer）。
+- 净删约 900 行；测试 48/48、lint、build 全绿。
+
 ## 1.2.0 - 2026-09-08
 
 ### 拉黑节奏合规化：保守默认 + 类人动态间隔 + 发布工作流正式化

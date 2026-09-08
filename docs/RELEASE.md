@@ -27,7 +27,7 @@
 3. **版本号**：同步更新四处 `manifest.json`、`apps/extension/package.json`、根 `package.json`、`apps/extension/src/projectInfo.ts`。
 4. **CHANGELOG.md**：按 `## x.y.z - 日期` 追加本节变更。
 5. **文档**：检查 README（中/英）与 `docs/USER_GUIDE.*` 是否有过期文字（同步机制、数字、按钮名），随功能更新。
-6. **构建产物**：`pnpm build` 后确认 `apps/extension/dist/manifest.json` 版本号与本次一致。
+6. **构建产物**：`pnpm build` 后确认 `apps/extension/dist/manifest.json` 版本号与本次一致；可选本地打包验证 `node scripts/package-extension.mjs`。
 7. **提交**：commit message 以版本号结尾（如 `feat: ... (1.1.19)`）；推送 `main`。
-8. **打标签 + 发布**：`git tag v1.1.19 && git push origin v1.1.19`，`gh release create v1.1.19 --generate-notes`。
-9. **上传可安装包**（dist 不入 git）：`cd apps/extension/dist && zip -r ../../xshield-vX.Y.Z.zip .`，`gh release upload vX.Y.Z xshield-vX.Y.Z.zip`——Release 页提供解压即用的安装包。
+8. **打标签发布（自动打包）**：`git tag v1.2.0 && git push origin v1.2.0`——推送 `v*` 标签即触发 `.github/workflows/release.yml`：自动 lint/test/build、`node scripts/package-extension.mjs` 打成 `xshield-vX.Y.Z.zip`，并创建 GitHub Release 上传该安装包。Release 页提供解压即用的安装包。
+9. **发布失败时的本地兜底**：若 CI 未跑或想先手动发布，可本地执行 `pnpm build && node scripts/package-extension.mjs`，然后 `gh release create vX.Y.Z --generate-notes xshield-vX.Y.Z.zip`（或对已存在的 Release 用 `gh release upload vX.Y.Z xshield-vX.Y.Z.zip --clobber`）。

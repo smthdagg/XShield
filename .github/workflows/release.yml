@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          package-manager: pnpm
+      - uses: actions/setup-node@v4
+        with:
+          # jsdom 30 requires Node >= 22.6 (node:webidl.markAsUncloneable).
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Lint
+        run: pnpm lint
+      - name: Test
+        run: pnpm test
+      - name: Build (type-check + bundle)
+        run: pnpm build
+      - name: Package release zip
+        run: node scripts/package-extension.mjs
+      - name: Create / update GitHub Release with asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="$GITHUB_REF_NAME"
+          ZIP="xshield-${VERSION}.zip"
+          gh release create "$VERSION" --generate-notes --title "XShield $VERSION" "$ZIP" \
+            || gh release upload "$VERSION" "$ZIP" --clobber

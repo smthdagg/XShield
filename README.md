@@ -21,7 +21,7 @@
 **方式 A：从 Release 下载安装包（推荐）**
 
 1. 打开 [GitHub Releases](https://github.com/smthdagg/XShield/releases) 页面，下载最新版的 `xshield-vX.Y.Z.zip`（每个版本都附有已构建好的安装包）；
-2. 解压 zip，得到一个内含 `manifest.json` 的文件夹（例如 `xshield-1.1.19`）；
+2. 解压 zip，得到一个内含 `manifest.json` 的文件夹（例如 `xshield-v1.1.19`）；
 3. Chrome 打开 `chrome://extensions` → 右上角开启「**开发者模式**」→ 点「**加载已解压的扩展程序**」→ 选择刚才解压的文件夹；
 4. 把 XShield 固定到工具栏，用你的 X 账号登录 [x.com](https://x.com)。
 
@@ -100,7 +100,7 @@ A browser extension that protects your X (Twitter) timeline: it auto-hides spam 
 **Option A: release package (recommended)**
 
 1. Open [GitHub Releases](https://github.com/smthdagg/XShield/releases) and download the latest `xshield-vX.Y.Z.zip` (every release ships a pre-built package);
-2. Unzip it — you get a folder containing `manifest.json` (e.g. `xshield-1.1.19`);
+2. Unzip it — you get a folder containing `manifest.json` (e.g. `xshield-v1.1.19`);
 3. Chrome → `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select that folder;
 4. Pin XShield to the toolbar and log in to [x.com](https://x.com).
 

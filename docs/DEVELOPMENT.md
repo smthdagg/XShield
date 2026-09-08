@@ -19,6 +19,7 @@ pnpm install
 pnpm lint
 pnpm test
 pnpm build
+node scripts/package-extension.mjs   # 打包 release zip（xshield-vX.Y.Z.zip，需先 build）
 ```
 
 ## 架构

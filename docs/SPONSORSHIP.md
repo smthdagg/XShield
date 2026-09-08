@@ -14,7 +14,7 @@
 
 公开发布前，请把下面链接替换成你的真实赞助方式：
 
-- GitHub Sponsors: `https://github.com/sponsors/your-name`
+- GitHub Sponsors: `https://github.com/sponsors/smthdagg`
 - 爱发电/Buy Me a Coffee/微信赞赏码：请在这里补充。
 
 项目不会因为赞助而加入隐私上传、强制联网或绕过平台限制的能力。

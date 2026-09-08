@@ -92,7 +92,6 @@ const globalSpamCache = new Set<string>();
 const storageQueue = new AsyncQueue();
 
 let inMemoryHistory: SpamItem[] | null = null;
-let inMemoryBlockedCount: number | null = null;
 let pendingSpamBatch: SpamItem[] = [];
 const communitySourceIds = new Set<string>();
 let spamBatchTimer: ReturnType<typeof setTimeout> | null = null;
@@ -114,16 +113,12 @@ function syncGlobalSpamCache(): void {
 
 const initHistoryPromise = storageQueue.enqueue(async () => {
   try {
-    const items = await chrome.storage.local.get(
-      getStorageDefaults('blockedCount', 'blockedHistory'),
-    );
+    const items = await chrome.storage.local.get(getStorageDefaults('blockedHistory'));
     inMemoryHistory = (items.blockedHistory as SpamItem[]) ?? [];
-    inMemoryBlockedCount = (items.blockedCount as number) ?? 0;
     syncGlobalSpamCache();
   } catch (e) {
     console.error('[X-Blocker] Init history error:', e);
     inMemoryHistory ??= [];
-    inMemoryBlockedCount ??= 0;
   }
 });
 
@@ -136,7 +131,6 @@ async function ensureHistoryInitialized(): Promise<void> {
 async function saveHistoryState(): Promise<void> {
   try {
     await chrome.storage.local.set({
-      blockedCount: inMemoryBlockedCount,
       blockedHistory: inMemoryHistory,
       _historyRev: currentSessionToken,
     });
@@ -155,10 +149,6 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes.blockedHistory) {
     inMemoryHistory = (changes.blockedHistory.newValue as SpamItem[]) ?? [];
     syncGlobalSpamCache();
-  }
-
-  if (changes.blockedCount) {
-    inMemoryBlockedCount = (changes.blockedCount.newValue as number) ?? 0;
   }
 });
 
@@ -972,10 +962,9 @@ chrome.runtime.onMessage.addListener((message: Record<string, unknown>, _sender,
         }
         pendingSpamBatch = [];
         inMemoryHistory = [];
-        inMemoryBlockedCount = 0;
         globalSpamCache.clear();
         await saveHistoryState();
-        void addLog('warn', 'settings', '用户手动清空屏蔽历史（全部记录与计数已重置）');
+        void addLog('warn', 'settings', '用户手动清空屏蔽历史（全部记录已重置）');
       })
       .then(() => sendResponse({ success: true }));
     return true;
@@ -1144,7 +1133,6 @@ function handleRemoveSpamRecord(id: string, time?: number): Promise<{ success: b
       if (id) {
         globalSpamCache.delete(id);
       }
-      inMemoryBlockedCount = Math.max(0, (inMemoryBlockedCount ?? 0) - removedCount);
       await saveHistoryState();
     }
 
@@ -1248,7 +1236,6 @@ async function bulkRemoveRecords(
     const historyRemoved = originalLength - (inMemoryHistory ?? []).length;
     const totalRemoved = historyRemoved + batchRemovedItems.length;
     if (historyRemoved > 0) {
-      inMemoryBlockedCount = Math.max(0, (inMemoryBlockedCount ?? 0) - historyRemoved);
       await saveHistoryState();
     }
 
@@ -1362,7 +1349,6 @@ async function flushSpamBatch(): Promise<void> {
         }
       }
     }
-    inMemoryBlockedCount = (inMemoryBlockedCount ?? 0) + batch.length;
     await saveHistoryState();
   });
 }

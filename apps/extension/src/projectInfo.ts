@@ -6,6 +6,5 @@ export const PROJECT_INFO = {
   repositoryUrl: 'https://github.com/smthdagg/XShield',
   issuesUrl: 'https://github.com/smthdagg/XShield/issues',
   discussionsUrl: 'https://github.com/smthdagg/XShield/discussions',
-  sponsorUrl: 'https://github.com/sponsors/your-name',
-  securityEmail: 'security@example.com',
+  sponsorUrl: 'https://github.com/sponsors/smthdagg',
 } as const;

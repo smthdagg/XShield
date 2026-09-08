@@ -200,7 +200,6 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
   it('manual blockUserOnX succeeds: ledger gains the user, trigger records untouched', async () => {
     await bootstrap({
       blockedHistory: [record('tweet-3', 'spammer1', false), record('tweet-4', 'someone', false)],
-      blockedCount: 2,
     });
 
     const res = (await dispatch({ action: 'blockUserOnX', screenName: 'spammer1' })) as {
@@ -213,7 +212,6 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
     expect(storageData.blockedUsersOnX).toContain('spammer1');
     // Both records stay exactly as they were — including spammer1's.
     expect((storageData.blockedHistory as Array<{ id: string }>).length).toBe(2);
-    expect(storageData.blockedCount).toBe(2);
   });
 
   it('manual block of a QUEUED user purges them from the pending queue', async () => {
@@ -762,7 +760,6 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
     await bootstrap({
       blockedUsersOnX: ['spammer1'],
       blockedHistory: [record('tweet-6', 'spammer1', false)],
-      blockedCount: 1,
     });
     const res = (await dispatch({ action: 'unblockUserOnX', screenName: 'spammer1' })) as {
       success?: boolean;

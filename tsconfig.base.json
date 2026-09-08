@@ -15,12 +15,6 @@
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    "baseUrl": ".",
-    "paths": {
-      "@xshield/shared": ["packages/shared/src/index.ts"],
-      "@xshield/rule-engine": ["packages/rule-engine/src/index.ts"],
-      "@xshield/block-executor": ["packages/block-executor/src/index.ts"],
-      "@xshield/search-engine": ["packages/search-engine/src/index.ts"]
-    }
+    "baseUrl": "."
   }
 }

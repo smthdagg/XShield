@@ -1,12 +1,13 @@
 /**
- * XShield dashboard — five pages:
+ * XShield dashboard — six pages:
  *   1. Triggered users (nickname / @handle / reply text; remove, whitelist,
  *      block one, select-all block)
  *   2. Blocked log (blocked users + pending queue + today counter)
  *   3. Whitelist
  *   4. Rules & sync (cloud + custom keywords; cloud syncs down, local is
  *      user-owned: add / edit / delete)
- *   5. Script settings (master, hide/highlight mode, filters, language)
+ *   5. Status & Logs (runtime stats + activity log)
+ *   6. Script settings (master, hide/highlight mode, filters, language)
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
@@ -52,7 +53,6 @@ interface SpamRecord {
 const DEFAULTS: Record<string, unknown> = {
   enabled: true,
   highlightMode: false,
-  blockedCount: 0,
   blockedHistory: [] as SpamRecord[],
   cloudKeywords: '',
   keywords: '',

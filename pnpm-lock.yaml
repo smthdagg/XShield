@@ -70,26 +70,6 @@ importers:
         specifier: ^30.0.1
         version: 30.0.1
 
-  packages/block-executor:
-    dependencies:
-      '@xshield/shared':
-        specifier: workspace:*
-        version: link:../shared
-
-  packages/rule-engine:
-    dependencies:
-      '@xshield/shared':
-        specifier: workspace:*
-        version: link:../shared
-
-  packages/search-engine:
-    dependencies:
-      '@xshield/shared':
-        specifier: workspace:*
-        version: link:../shared
-
-  packages/shared: {}
-
 packages:
 
   '@asamuzakjp/css-color@6.0.7':

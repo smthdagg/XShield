@@ -25,7 +25,6 @@ interface SpamRecord {
 const storageData: Record<string, unknown> = {
   enabled: true,
   highlightMode: false,
-  blockedCount: 2,
   blockedHistory: [
     {
       id: 'rec1',

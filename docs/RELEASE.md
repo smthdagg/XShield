@@ -2,9 +2,6 @@
 
 ## GitHub 发布前
 
-- [ ] 替换 `your-name/xshield` 为真实仓库地址。
-- [ ] 替换 `security@example.com` 为真实安全邮箱。
-- [ ] 替换 `.github/FUNDING.yml` 的赞助账号。
 - [ ] 更新 `CHANGELOG.md`。
 - [ ] 运行 `pnpm lint`。
 - [ ] 运行 `pnpm test`。

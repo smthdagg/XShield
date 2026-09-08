@@ -28,11 +28,7 @@ node scripts/package-extension.mjs   # 打包 release zip（xshield-vX.Y.Z.zip�
 - `apps/extension/src/background`：后台消息、规则评估和队列协调。
 - `apps/extension/src/dashboard`：主控制台。
 - `apps/extension/src/popup`：扩展弹窗。
-- `apps/extension/src/store`：本地状态、IndexedDB、队列执行。
-- `packages/rule-engine`：规则匹配与评分。
-- `packages/search-engine`：用户采集与搜索辅助。
-- `packages/block-executor`：队列执行与重试。
-- `packages/shared`：共享类型和默认配置。
+- `apps/extension/src/store`：本地状态、屏蔽历史、队列执行。
 
 ## 发布前检查
 

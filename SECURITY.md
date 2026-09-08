@@ -2,17 +2,11 @@
 
 ## 支持版本
 
-当前维护版本：`0.3.x`
+当前维护版本：`1.x`
 
 ## 报告安全问题
 
-如果你发现安全问题，请不要公开提交 Issue。请发送邮件到：
-
-```text
-security@example.com
-```
-
-公开发布前请把该邮箱替换成你的真实安全联系邮箱。
+如果发现安全问题，请优先通过 [GitHub Security Advisories](https://github.com/smthdagg/XShield/security/advisories)（Private vulnerability reporting，若已启用）提交；不可用或不确定时，通过 [GitHub Issues](https://github.com/smthdagg/XShield/issues) 提交并注明「security」，避免在公开渠道过度披露细节。
 
 报告中请包含：
 

@@ -827,42 +827,26 @@ async function normalizeStoredLists(): Promise<void> {
 const statsInitPromise = (async () => {
   try {
     const stored = await chrome.storage.local.get(
-      getStorageDefaults(
-        'statsMigrated',
-        'statsTotalBlocks',
-        'statsTriggers',
-        'statsBlocksByDay',
-        'blockedUsersOnX',
-        'blockedAt',
-      ),
+      getStorageDefaults('statsMigrated', 'statsTotalBlocks', 'blockedUsersOnX', 'blockedAt'),
     );
     if (stored.statsMigrated === true) return;
 
     const ledger = (stored.blockedUsersOnX as string[]) ?? [];
-    const blockedAt = (stored.blockedAt as Record<string, number>) ?? {};
-    const byDay: Record<string, number> = {
-      ...((stored.statsBlocksByDay as Record<string, number>) ?? {}),
-    };
-    if (ledger.length > 0 && Object.keys(byDay).length === 0) {
-      for (const ts of Object.values(blockedAt)) {
-        if (!ts) continue;
-        const key = getLocalDateString(new Date(ts));
-        byDay[key] = (byDay[key] ?? 0) + 1;
-      }
-      const seededBlocks = Object.values(byDay).reduce((a, b) => a + b, 0);
-      // blockedAt may miss entries for old ledger members — take the max.
-      await chrome.storage.local.set({
-        statsTotalBlocks: Math.max(
-          Number(stored.statsTotalBlocks ?? 0),
-          ledger.length,
-          seededBlocks,
-        ),
-        statsBlocksByDay: byDay,
-      });
+    const byDay: Record<string, number> = {};
+    let seeded = 0;
+    for (const ts of Object.values((stored.blockedAt as Record<string, number>) ?? {})) {
+      if (!ts) continue;
+      byDay[getLocalDateString(new Date(ts))] = (byDay[getLocalDateString(new Date(ts))] ?? 0) + 1;
+      seeded++;
     }
+    // Single atomic write: a crash mid-migration leaves statsMigrated unset
+    // and the seed simply retries on the next worker start.
     await chrome.storage.local.set({
       statsMigrated: true,
       statsTriggers: Number(stored.statsTriggers ?? 0),
+      // blockedAt may miss entries for old ledger members — take the max.
+      statsTotalBlocks: Math.max(Number(stored.statsTotalBlocks ?? 0), ledger.length, seeded),
+      statsBlocksByDay: byDay,
     });
   } catch (e) {
     console.warn('[XShield] runtime stats migration skipped:', e);

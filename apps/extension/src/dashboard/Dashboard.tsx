@@ -87,7 +87,6 @@ const DEFAULTS: Record<string, unknown> = {
   statsTotalBlocks: 0,
   statsTriggers: 0,
   statsBlocksByDay: {} as Record<string, number>,
-  statsMigrated: false,
   currentUsername: '',
   currentUserSeenAt: 0,
 };
@@ -123,6 +122,11 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (value: boo
       <span className="toggle-knob" />
     </button>
   );
+}
+
+/** Typed slice of the storage-backed state with a stable default. */
+function useSlice<T>(state: Record<string, unknown>, key: string, fallback: T): T {
+  return (state[key] as T) ?? fallback;
 }
 
 function KeywordTag({
@@ -266,18 +270,9 @@ export default function Dashboard() {
     void chrome.storage.local.set({ [key]: value });
   };
 
-  const blockedHistory = useMemo(
-    () => (state.blockedHistory as SpamRecord[]) ?? [],
-    [state.blockedHistory],
-  );
-  const autoBlockQueue = useMemo(
-    () => (state.autoBlockQueue as string[]) ?? [],
-    [state.autoBlockQueue],
-  );
-  const blockedUsersOnX = useMemo(
-    () => (state.blockedUsersOnX as string[]) ?? [],
-    [state.blockedUsersOnX],
-  );
+  const blockedHistory = useSlice<SpamRecord[]>(state, 'blockedHistory', []);
+  const autoBlockQueue = useSlice<string[]>(state, 'autoBlockQueue', []);
+  const blockedUsersOnX = useSlice<string[]>(state, 'blockedUsersOnX', []);
   // Queue entries that duplicate the ledger can never be re-blocked — show
   // them as pending-delete duplicates, separate from the real pending queue.
   // (The background also auto-purges them, so this section is best-effort.)
@@ -290,7 +285,7 @@ export default function Dashboard() {
     () => autoBlockQueue.filter((name) => !blockedUsersOnX.includes(name)),
     [autoBlockQueue, blockedUsersOnX],
   );
-  const whitelist = useMemo(() => (state.whitelist as string[]) ?? [], [state.whitelist]);
+  const whitelist = useSlice<string[]>(state, 'whitelist', []);
   const cloudKeywords = useMemo(
     () => parseKeywords(String(state.cloudKeywords ?? '')),
     [state.cloudKeywords],
@@ -679,11 +674,8 @@ export default function Dashboard() {
   // Synthetic 社区共享 records accumulate from past feeding rounds (the
   // multi-thousand backlog) — they carry no real signal, just visibility.
   const communityRecordCount = useMemo(
-    () =>
-      ((state.blockedHistory as SpamRecord[]) ?? []).filter((r) =>
-        String(r.id ?? '').startsWith('community:'),
-      ).length,
-    [state.blockedHistory],
+    () => blockedHistory.filter((r) => String(r.id ?? '').startsWith('community:')).length,
+    [blockedHistory],
   );
   // True when the working list is empty because every record's user is
   // already blocked (they live under the 已拉黑 filter now).
@@ -734,14 +726,14 @@ export default function Dashboard() {
     const set = new Set(
       ((state.communityHandles as string[]) ?? []).map(extractCleanScreenName).filter(Boolean),
     );
-    for (const r of (state.blockedHistory as SpamRecord[]) ?? []) {
+    for (const r of blockedHistory) {
       if (String(r.id ?? '').startsWith('community:')) {
         const handle = extractCleanScreenName(r.user ?? '');
         if (handle) set.add(handle);
       }
     }
     return set;
-  }, [state.communityHandles, state.blockedHistory]);
+  }, [state.communityHandles, blockedHistory]);
   const filteredQueueNames = useMemo(() => {
     if (queueFilter === 'community')
       return pendingQueue.filter((name) => communityQueuedSet.has(name));
@@ -774,46 +766,41 @@ export default function Dashboard() {
   })();
 
   // Runtime status (1.3.0): since-install counters + the logged-in account.
-  const runtimeStats = (() => {
-    const totalBlocks = Number(state.statsTotalBlocks ?? 0);
-    const triggers = Number(state.statsTriggers ?? 0);
-    const dayCount = Object.keys((state.statsBlocksByDay as Record<string, number>) ?? {}).length;
-    const avgPerDay = dayCount > 0 ? Math.round((totalBlocks / dayCount) * 10) / 10 : 0;
-    return {
-      totalBlocks,
-      triggers,
-      avgPerDay,
-      username: String(state.currentUsername ?? ''),
-      seenAt: Number(state.currentUserSeenAt ?? 0),
-    };
-  })();
+  const statCards: Array<[string, string]> = [
+    [t.statTotalBlocked, String(Number(state.statsTotalBlocks ?? 0))],
+    [
+      t.statAvgPerDay,
+      String(
+        Object.keys((state.statsBlocksByDay as Record<string, number>) ?? {}).length > 0
+          ? Math.round(
+              (Number(state.statsTotalBlocks ?? 0) /
+                Object.keys((state.statsBlocksByDay as Record<string, number>) ?? {}).length) *
+                10,
+            ) / 10
+          : 0,
+      ),
+    ],
+    [t.statTotalTriggers, String(Number(state.statsTriggers ?? 0))],
+    [t.statCurrentUser, String(state.currentUsername ?? '') || '—'],
+  ];
+  const seenAt = Number(state.currentUserSeenAt ?? 0);
   const runtimeStatsSection = (
     <div className="settings-section">
       <h3>{t.statsSectionTitle}</h3>
       <div className="metric-grid small">
-        <article className="metric-card">
-          <span>{t.statTotalBlocked}</span>
-          <strong>{String(runtimeStats.totalBlocks)}</strong>
-        </article>
-        <article className="metric-card">
-          <span>{t.statAvgPerDay}</span>
-          <strong>{String(runtimeStats.avgPerDay)}</strong>
-        </article>
-        <article className="metric-card">
-          <span>{t.statTotalTriggers}</span>
-          <strong>{String(runtimeStats.triggers)}</strong>
-        </article>
-        <article className="metric-card">
-          <span>{t.statCurrentUser}</span>
-          <strong>{runtimeStats.username || '—'}</strong>
-        </article>
+        {statCards.map(([label, value]) => (
+          <article className="metric-card" key={label}>
+            <span>{label}</span>
+            <strong>{value}</strong>
+          </article>
+        ))}
       </div>
-      {runtimeStats.seenAt > 0 && (
+      {seenAt > 0 && (
         <p className="hint">
-          {t.seenAt}:{new Date(runtimeStats.seenAt).toLocaleString()}
+          {t.seenAt}:{new Date(seenAt).toLocaleString()}
         </p>
       )}
-      {runtimeStats.totalBlocks === 0 && runtimeStats.triggers === 0 && (
+      {Number(state.statsTotalBlocks ?? 0) === 0 && Number(state.statsTriggers ?? 0) === 0 && (
         <p className="hint">{t.noStatsYet}</p>
       )}
     </div>

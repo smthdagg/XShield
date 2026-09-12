@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.1 - 2026-09-09
+
+### ponytail-review 修剪（纯重构，无行为变化）
+
+- 面板：`runtimeStats` IIFE 内联为直接取值；统计卡 4 张 JSX 改为 `statCards` 数组 map 渲染；12 个纯切片 `useMemo` 收敛为 `useSlice` 帮助函数；DEFAULTS 移除面板从不读取的 `statsMigrated`。
+- 内容脚本：当前账号识别的 21 项路由枚举（`KNOWN_NAV_ROUTES`）改为 `data-testid` 白名单式探测（`*_Link` 且 href 为单段 handle），不怕 X 加新路由；10 秒 `setInterval` 轮询删除，改挂到既有 MutationObserver 的 microtask flush（每分钟最多一次，本身变化门控）。
+- 后台：`statsInitPromise` 升级迁移从两次写入收敛为单次原子 set（中途崩溃会在下次 worker 启动干净重试），读取键从 6 个减到 4 个。
+- 净减约 96 行；lint / 48 项测试 / 构建全绿。
+
 ## 1.3.0 - 2026-09-08
 
 ### 运行状态统计 + 状态与日志页

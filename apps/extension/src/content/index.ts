@@ -38,33 +38,13 @@ function isExtensionAlive(): boolean {
 /**
  * Track the logged-in account for the dashboard runtime-status card. X renders
  * the current user's profile as `AppTabBar_Profile_Link` in the primary nav;
- * fall back to any single-segment nav link that looks like a handle. Reports
- * to the background only when the handle actually changes — one message per
- * account switch, not a per-tick stream.
+ * fall back to any other `*_Link` nav entry whose href is a single handle
+ * segment. Reports to the background only when the handle actually changes —
+ * one message per account switch, not a per-tick stream.
  */
 let lastReportedUser = '';
-
-const KNOWN_NAV_ROUTES = new Set([
-  'home',
-  'explore',
-  'notifications',
-  'messages',
-  'groks',
-  'bookmarks',
-  'communities',
-  'connect',
-  'i',
-  'settings',
-  'search',
-  'jobs',
-  'lists',
-  'topics',
-  'moments',
-  'analytics',
-  'news',
-  'insights',
-  'advertising',
-]);
+/** Throttle for the piggybacked user re-check inside the observer flush. */
+let lastUserCheck = 0;
 
 function detectCurrentUser(): void {
   const primary = document.querySelector<HTMLAnchorElement>(
@@ -75,15 +55,12 @@ function detectCurrentUser(): void {
     handle = extractCleanScreenName(primary.getAttribute('href') ?? '');
   } else {
     const nav = document.querySelector('nav[aria-label="Primary"]');
-    const candidates = nav
-      ? Array.from(nav.querySelectorAll<HTMLAnchorElement>('a[href^="/"]'))
-      : [];
-    const profileLink = candidates.find((a) => {
-      const seg = (a.getAttribute('href') ?? '').split('?')[0].replace(/\/+$/, '');
-      return (
-        /^\/[a-zA-Z0-9_]{1,15}$/.test(seg) && !KNOWN_NAV_ROUTES.has(seg.slice(1).toLowerCase())
-      );
-    });
+    const profileLink = nav
+      ? Array.from(nav.querySelectorAll<HTMLAnchorElement>('a[data-testid$="_Link"]')).find((a) => {
+          const seg = (a.getAttribute('href') ?? '').split('?')[0].replace(/\/+$/, '');
+          return /^\/[a-zA-Z0-9_]{1,15}$/.test(seg);
+        })
+      : null;
     handle = profileLink ? extractCleanScreenName(profileLink.getAttribute('href') ?? '') : '';
   }
   if (!handle || handle === lastReportedUser) return;
@@ -660,6 +637,13 @@ async function init(): Promise<void> {
             filterTweets(Array.from(pendingTweets));
             pendingTweets.clear();
           }
+          // Runtime-status piggybacks here: nav re-renders on account switch
+          // flip the DOM, so this flush fires; throttled to once a minute and
+          // the report itself is change-gated.
+          if (Date.now() - lastUserCheck >= 60_000) {
+            lastUserCheck = Date.now();
+            detectCurrentUser();
+          }
         });
       }
     });
@@ -686,12 +670,8 @@ async function init(): Promise<void> {
       `[XShield] content v${chrome.runtime.getManifest().version} ready · 启用=${filterEnabled} · 规则=${blockRegexes.length}`,
     );
 
-    // Runtime-status: report the logged-in account once, then re-check every
-    // 10 s so SPA account switches are noticed without a per-tick message.
+    // First report; afterwards the observer's flush keeps it fresh (see above).
     detectCurrentUser();
-    setInterval(() => {
-      if (isExtensionAlive()) detectCurrentUser();
-    }, 10_000);
   } catch (e) {
     console.error('[X-Blocker] init error:', e);
   }

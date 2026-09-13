@@ -192,7 +192,7 @@ export interface BlockedEntry {
 }
 
 /** Pure filter+pagination for the blocked-users database view (exported for tests). */
-export function filterAndPageBlocked(
+function filterAndPageBlocked(
   entries: BlockedEntry[],
   query: string,
   page: number,
@@ -820,7 +820,7 @@ export default function Dashboard() {
       <aside className="sidebar">
         <div className="brand">
           <img src={chrome.runtime.getURL('icons/xshield-logo.svg')} alt="" />
-          <span>XShield</span>
+          <span>{t.appName}</span>
           <span className={`status-dot${state.enabled ? ' on' : ''}`} />
           <span className="version-badge">v{chrome.runtime.getManifest().version}</span>
         </div>

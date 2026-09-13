@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.0 - 2026-09-09
+
+### 中文名「X护盾」+ ponytail 审计修复 + 后台模块拆分
+
+- **中文名定名「X护盾」**：扩展名（`X护盾 (XShield)`）、面板侧栏/弹窗/关于页、README 中文段、简繁帮助文案全部落地；`projectInfo` 新增 `nameZh`，面板品牌名走三语 `appName` 键（XShield / X护盾 / X護盾）。
+- **ponytail 全库审计修复**：删除 11 个零引用 i18n 键 ×3 语言（33 行）；`getAuthHeaders` 一次性异步函数内联为常量；`filterAndPageBlocked` 去掉文件外无人引用的 `export`。`buildTrieRegex` 前缀 trie 列为发现但保留（关键词匹配热路径，收益 -25 行不抵风险）。
+- **结构优化**：`AutoBlockManager` 及其节奏/退避逻辑从 1700 行的 `background/index.ts` 拆分为独立 `background/autoBlock.ts`——X 拉黑调用与历史数据以依赖注入传入（`blockUser` / `historyUsers`），模块零反向依赖；`index.ts` 降至约 1300 行，测试入口（单例再导出）不变。
+- lint / 48 项测试 / 构建 / prettier 全绿。
+
 ## 1.3.1 - 2026-09-09
 
 ### ponytail-review 修剪（纯重构，无行为变化）

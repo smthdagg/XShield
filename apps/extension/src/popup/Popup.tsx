@@ -17,8 +17,10 @@ export function Popup() {
       });
     const onChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
       if (area !== 'local') return;
-      if (changes.blockedUsersOnX) setBlockedUsers(((changes.blockedUsersOnX.newValue as string[]) ?? []).length);
-      if (changes.autoBlockQueue) setQueueCount(((changes.autoBlockQueue.newValue as string[]) ?? []).length);
+      if (changes.blockedUsersOnX)
+        setBlockedUsers(((changes.blockedUsersOnX.newValue as string[]) ?? []).length);
+      if (changes.autoBlockQueue)
+        setQueueCount(((changes.autoBlockQueue.newValue as string[]) ?? []).length);
       if (changes.enabled) setEnabled(Boolean(changes.enabled.newValue));
     };
     chrome.storage.onChanged.addListener(onChanged);
@@ -33,7 +35,7 @@ export function Popup() {
     <div className="popup-shell">
       <div className="popup-brand">
         <img src={chrome.runtime.getURL('icons/xshield-logo.svg')} alt="" />
-        <span>XShield</span>
+        <span>X护盾</span>
         <span className={`status-dot${enabled ? ' on' : ''}`} />
       </div>
       <div className="popup-stats">

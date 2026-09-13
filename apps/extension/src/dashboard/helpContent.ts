@@ -14,7 +14,8 @@ export type HelpLanguage = 'en' | 'zh-CN' | 'zh-TW' | 'ja' | 'ko' | 'fr';
 export const helpManuals: Record<HelpLanguage, HelpManual> = {
   en: {
     title: 'Help Manual',
-    intro: 'XShield helps you detect suspicious X/Twitter accounts, review them manually, and block confirmed targets through a controlled queue.',
+    intro:
+      'XShield helps you detect suspicious X/Twitter accounts, review them manually, and block confirmed targets through a controlled queue.',
     sections: [
       {
         title: '1. First Setup',
@@ -67,7 +68,8 @@ export const helpManuals: Record<HelpLanguage, HelpManual> = {
   },
   'zh-CN': {
     title: '帮助手册',
-    intro: 'XShield 用于识别 X/Twitter 上的可疑账号，经过人工复核后，再通过可控队列执行拉黑。',
+    intro:
+      'X护盾（XShield）用于识别 X/Twitter 上的可疑账号，经过人工复核后，再通过可控队列执行拉黑。',
     sections: [
       {
         title: '1. 初次设置',
@@ -120,7 +122,8 @@ export const helpManuals: Record<HelpLanguage, HelpManual> = {
   },
   'zh-TW': {
     title: '幫助手冊',
-    intro: 'XShield 可協助識別 X/Twitter 上的可疑帳號，經人工複核後，再透過可控佇列執行拉黑。',
+    intro:
+      'X護盾（XShield）可協助識別 X/Twitter 上的可疑帳號，經人工複核後，再透過可控佇列執行拉黑。',
     sections: [
       {
         title: '1. 初次設定',
@@ -173,7 +176,8 @@ export const helpManuals: Record<HelpLanguage, HelpManual> = {
   },
   ja: {
     title: 'ヘルプマニュアル',
-    intro: 'XShield は X/Twitter 上の疑わしいアカウントを検出し、人が確認した後に制御されたキューでブロックするための拡張機能です。',
+    intro:
+      'XShield は X/Twitter 上の疑わしいアカウントを検出し、人が確認した後に制御されたキューでブロックするための拡張機能です。',
     sections: [
       {
         title: '1. 初期設定',
@@ -222,7 +226,8 @@ export const helpManuals: Record<HelpLanguage, HelpManual> = {
   },
   ko: {
     title: '도움말',
-    intro: 'XShield는 X/Twitter의 의심 계정을 감지하고 사용자가 검토한 뒤 제어 가능한 큐로 차단하는 확장 프로그램입니다.',
+    intro:
+      'XShield는 X/Twitter의 의심 계정을 감지하고 사용자가 검토한 뒤 제어 가능한 큐로 차단하는 확장 프로그램입니다.',
     sections: [
       {
         title: '1. 첫 설정',
@@ -271,7 +276,8 @@ export const helpManuals: Record<HelpLanguage, HelpManual> = {
   },
   fr: {
     title: "Manuel d'aide",
-    intro: 'XShield aide à détecter les comptes suspects sur X/Twitter, à les examiner manuellement, puis à bloquer les cibles confirmées avec une file contrôlée.',
+    intro:
+      'XShield aide à détecter les comptes suspects sur X/Twitter, à les examiner manuellement, puis à bloquer les cibles confirmées avec une file contrôlée.',
     sections: [
       {
         title: '1. Première configuration',

@@ -39,6 +39,10 @@ const staleWrites: Array<Record<string, unknown>> = [];
 
 function resetStorage(): void {
   for (const key of Object.keys(storageData)) delete storageData[key];
+  // 本套件测试「拉黑管道」本体：种子旧默认（两个引擎允许拉黑），
+  // 否则 1.8.0 的启动对账会把种子队列清空。
+  storageData.keywordAutoBlock = true;
+  storageData.aiAutoBlock = true;
 }
 
 function makeChromeMock() {
@@ -83,6 +87,7 @@ function makeChromeMock() {
       onChanged: { addListener: vi.fn(), removeListener: vi.fn() },
     },
     alarms: { create: vi.fn(), onAlarm: { addListener: vi.fn() } },
+    action: { onClicked: { addListener: vi.fn() } },
     cookies: {
       get: vi.fn(async (): Promise<{ value?: string } | undefined> => ({ value: 'ct0-token' })),
     },
@@ -943,11 +948,17 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
     await bootstrap({
       autoBlockQueue: ['old1', 'old2'],
       autoBlockEta: { old1: farFuture, old2: farFuture },
+      // 冻结排水必须在 import 之前生效（1.8.0 起 process 在启动对账后才启动）
+      autoBlockDailyLimit: 0,
       blockedUsersOnX: [],
       whitelist: [],
       autoBlockGraceMinutes: 30,
     });
-    const bg = await import('../background/index');
+    const bg = (await import('../background/index')) as typeof import('../background/index') & {
+      backgroundReady: Promise<void>;
+    };
+    // 等启动链（含仅隐藏对账）完成，避免启动排水与本次入队竞态。
+    await bg.backgroundReady;
     // Freeze the drain so the queue contents can be asserted (readyNow
     // entries are immediately eligible and would be consumed otherwise).
     bg.autoBlockManager.dailyLimit = 0;
@@ -1073,5 +1084,90 @@ describe('background block ledger (1.5.1 anti-drift)', () => {
     expect(res?.success).toBe(true);
     expect(storageData.currentUsername).toBe('newuser_1');
     expect(storageData.currentUserSeenAt).toBe(1_234_567_890);
+  });
+
+  it('切换为「仅隐藏」：撤回自动触发排队，社区共享名单保留', async () => {
+    Object.assign(storageData, {
+      autoBlockQueue: ['usera', 'userb', 'comm1'],
+      communityHandles: ['comm1'],
+      autoBlockEta: { usera: Date.now() + 60_000, userb: Date.now() + 60_000 },
+    });
+    const bg = (await import('../background/index')) as {
+      purgeQueueOnHideOnly: () => Promise<number>;
+    };
+    const dropped = await bg.purgeQueueOnHideOnly();
+    expect(dropped).toBe(2);
+    expect(storageData.autoBlockQueue).toEqual(['comm1']);
+  });
+
+  it('本地学习回路：人工确认提取特征词进「我的词库」', async () => {
+    Object.assign(storageData, { keywords: '已有词', aiLearnKeywords: true });
+    const bg = (await import('../background/index')) as {
+      extractLearnedKeywords: (text: string, nickname: string) => string[];
+    };
+    // 提取逻辑：整句 + 昵称段（emoji 分隔）
+    const learned = bg.extractLearnedKeywords(
+      '应该没人比我玩的开了吧我福不黑不信你看',
+      '葵宝炣♥免费破处♥',
+    );
+    expect(learned).toContain('应该没人比我玩的开了吧我福不黑不信你看');
+    expect(learned).toContain('免费破处');
+
+    // 消息流：合并进 keywords 且去重、受开关控制
+    const dispatch2 = (message: Record<string, unknown>): Promise<unknown> =>
+      new Promise((resolve) => {
+        for (const listener of messageListeners) {
+          const keepOpen = listener(message, {}, (res) => resolve(res));
+          if (keepOpen === true) return;
+        }
+      });
+    const r1 = (await dispatch2({
+      action: 'learnKeywords',
+      text: '全新话术加微信速来',
+      nickname: '无偿约♥同城',
+    })) as { learned: string[] };
+    expect(r1.learned).toContain('全新话术加微信速来');
+    expect(storageData.keywords).toContain('全新话术加微信速来');
+    expect(storageData.keywords).toContain('无偿约');
+
+    // 重复学习 → 不重复添加
+    const r2 = (await dispatch2({
+      action: 'learnKeywords',
+      text: '全新话术加微信速来',
+      nickname: '',
+    })) as { learned: string[] };
+    expect(r2.learned).toHaveLength(0);
+
+    // 开关关闭 → 不学习
+    Object.assign(storageData, { aiLearnKeywords: false });
+    const r3 = (await dispatch2({
+      action: 'learnKeywords',
+      text: '另一条话术文本内容',
+      nickname: '',
+    })) as { learned: string[] };
+    expect(r3.learned).toHaveLength(0);
+  });
+
+  it('启动对账：双引擎仅隐藏 → 清空非社区排队；单边关闭不对账', async () => {
+    Object.assign(storageData, {
+      autoBlockQueue: ['usera', 'comm1'],
+      communityHandles: ['comm1'],
+      keywordAutoBlock: false,
+      aiAutoBlock: false,
+    });
+    const bg = (await import('../background/index')) as {
+      reconcileQueueWithHideOnly: () => Promise<number>;
+    };
+    expect(await bg.reconcileQueueWithHideOnly()).toBe(1);
+    expect(storageData.autoBlockQueue).toEqual(['comm1']);
+
+    // 单边关闭：无法区分队列条目来源，不做清理
+    Object.assign(storageData, {
+      autoBlockQueue: ['userb', 'comm1'],
+      keywordAutoBlock: true,
+      aiAutoBlock: false,
+    });
+    expect(await bg.reconcileQueueWithHideOnly()).toBe(0);
+    expect(storageData.autoBlockQueue).toEqual(['userb', 'comm1']);
   });
 });

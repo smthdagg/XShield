@@ -24,7 +24,13 @@ const storageData: Record<string, unknown> = {
 const sentMessages: Array<Record<string, unknown>> = [];
 
 const chromeMock = {
-  runtime: { id: 't', sendMessage: vi.fn(async (m: Record<string, unknown>) => { sentMessages.push(m); }), onMessage: { addListener: vi.fn() } },
+  runtime: {
+    id: 't',
+    sendMessage: vi.fn(async (m: Record<string, unknown>) => {
+      sentMessages.push(m);
+    }),
+    onMessage: { addListener: vi.fn() },
+  },
   storage: {
     local: {
       get: vi.fn(async (keys: Record<string, unknown>) => {
@@ -41,7 +47,10 @@ const chromeMock = {
 describe('first-load hydration race', () => {
   it('hides a reply whose text was filled in after the initial scan', async () => {
     vi.stubGlobal('chrome', chromeMock);
-    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0) as unknown as number);
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0) as unknown as number,
+    );
 
     window.history.pushState({}, '', '/author/status/123');
     document.body.innerHTML = `
@@ -66,14 +75,22 @@ describe('first-load hydration race', () => {
     await new Promise((r) => setTimeout(r, 3600));
 
     const cell = document.getElementById('skeleton');
-    expect(cell?.classList.contains('x-comment-blocker-hidden')).toBe(true);
-    const record = sentMessages.find((m) => m.action === 'recordSpam') as { items?: Array<{ user?: string }> } | undefined;
+    // 命中先标记可见，1.5s 后自动收起 —— 断言时两者皆可能
+    expect(
+      cell?.classList.contains('xshield-marked') || cell?.classList.contains('xshield-collapsed'),
+    ).toBe(true);
+    const record = sentMessages.find((m) => m.action === 'recordSpam') as
+      | { items?: Array<{ user?: string }> }
+      | undefined;
     expect(record?.items?.[0]?.user).toBe('spammer1');
   }, 10000);
 
   it('hides a reply whose article subtree is injected INSIDE an existing skeleton cell', async () => {
     vi.stubGlobal('chrome', chromeMock);
-    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0) as unknown as number);
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0) as unknown as number,
+    );
 
     window.history.pushState({}, '', '/author/status/123');
     // Real first-open shape: the cell exists but is an empty skeleton — no
@@ -106,8 +123,13 @@ describe('first-load hydration race', () => {
     // itself must have hidden the reply.
     await new Promise((r) => setTimeout(r, 350));
 
-    expect(cell?.classList.contains('x-comment-blocker-hidden')).toBe(true);
-    const record = sentMessages.find((m) => m.action === 'recordSpam') as { items?: Array<{ user?: string }> } | undefined;
+    // 命中先标记可见，1.5s 后自动收起 —— 断言时两者皆可能
+    expect(
+      cell?.classList.contains('xshield-marked') || cell?.classList.contains('xshield-collapsed'),
+    ).toBe(true);
+    const record = sentMessages.find((m) => m.action === 'recordSpam') as
+      | { items?: Array<{ user?: string }> }
+      | undefined;
     expect(record?.items?.[0]?.user).toBe('spammer1');
   }, 5000);
 });

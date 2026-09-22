@@ -3,16 +3,401 @@
   display: none !important;
 }
 
-/* XShield highlight mode: yellow background + red text instead of hiding */
+/* ---- 判定状态条 (1.7.0)：每条 AI 判定回帖顶部的常驻状态条 ----
+   「判定结果 · 置信度 [显示/隐藏] [垃圾] [正常]」，隐藏时内容收起，
+   状态条即折叠占位条。不在 tweetText 内，不参与文本扫描。 */
+.xshield-collapsed > *:not(.xshield-bar) {
+  display: none !important;
+}
+.xshield-collapsed {
+  /* 垃圾用户位：淡粉色底 + 黄色判定字（用户指定视觉），触发时粉色闪烁 */
+  background: linear-gradient(90deg, #fdeef5, #fdf1f7) !important;
+  box-shadow: inset 3px 0 0 #94a3b8 !important;
+  animation: xshield-collapsed-in 0.9s ease;
+}
+/* 视口内延迟收起态：先淡粉标记可见，扫过去后自动收起 */
+.xshield-marked {
+  background: linear-gradient(90deg, #fdeef5, #fdf1f7) !important;
+  box-shadow: inset 3px 0 0 #94a3b8 !important;
+  animation: xshield-collapsed-in 0.9s ease;
+}
+@keyframes xshield-collapsed-in {
+  from {
+    outline: 2px solid #f9a8d4;
+    outline-offset: -2px;
+    filter: brightness(1.05);
+  }
+}
+.xshield-collapsed.xshield-hit--porn {
+  box-shadow: inset 3px 0 0 #db2777 !important;
+}
+.xshield-collapsed.xshield-hit--scam {
+  box-shadow: inset 3px 0 0 #dc2626 !important;
+}
+.xshield-collapsed.xshield-hit--ad {
+  box-shadow: inset 3px 0 0 #d97706 !important;
+}
+.xshield-collapsed.xshield-hit--bot {
+  box-shadow: inset 3px 0 0 #7c3aed !important;
+}
+.xshield-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 16px;
+  font-size: 13px;
+  color: #71767b;
+  overflow: hidden;
+}
+.xshield-bar-verdict {
+  flex-shrink: 0;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.xshield-bar--porn {
+  color: #db2777;
+}
+.xshield-bar--scam {
+  color: #dc2626;
+}
+.xshield-bar--ad {
+  color: #d97706;
+}
+.xshield-bar--bot {
+  color: #7c3aed;
+}
+.xshield-bar--normal {
+  color: #16a34a;
+}
+.xshield-bar--suspicious {
+  color: #ca8a04;
+}
+.xshield-bar--keyword {
+  color: #dc2626;
+}
+.xshield-bar--pending {
+  color: #64748b;
+  animation: xshield-ai-shimmer-text 1.4s ease-in-out infinite;
+}
+@keyframes xshield-ai-shimmer-text {
+  50% {
+    opacity: 0.4;
+  }
+}
+.xshield-bar-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #0f1419;
+}
+.xshield-bar button {
+  flex-shrink: 0;
+  padding: 1px 10px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.85;
+  cursor: pointer;
+}
+.xshield-bar button:hover {
+  opacity: 1;
+  background: rgba(127, 127, 127, 0.14);
+}
+.xshield-bar-spam.on {
+  background: #dc2626;
+  border-color: #dc2626;
+  color: #fff;
+  opacity: 1;
+}
+.xshield-bar-normal.on {
+  background: #16a34a;
+  border-color: #16a34a;
+  color: #fff;
+  opacity: 1;
+}
+
+/* XShield highlight mode: yellow background + red text instead of hiding.
+   1.7.0: gradient wash + colored accent + one-shot flash on entry. */
 .xshield-hit,
 .xshield-hit * {
-  color: #b91c1c !important;
+  color: #9f1d1d !important;
   text-decoration-color: #b91c1c !important;
 }
 .xshield-hit {
-  background: #fff3bf !important;
-  box-shadow: inset 4px 0 0 #f4c430 !important;
+  background: linear-gradient(90deg, #fff8dc, #fff3bf 45%, #ffefc2) !important;
+  box-shadow:
+    inset 4px 0 0 #f4c430,
+    inset 0 0 0 1px rgba(244, 196, 48, 0.25) !important;
+  animation: xshield-hit-in 0.6s ease;
 }
 .xshield-hit a {
   color: #7f1010 !important;
+}
+@keyframes xshield-hit-in {
+  from {
+    filter: brightness(1.07);
+  }
+}
+/* 高亮模式按 AI 类别着色：左缘色条 + 同族浅色底 */
+.xshield-hit--porn {
+  background: linear-gradient(90deg, #fdf2f8, #fce7f3) !important;
+  box-shadow: inset 4px 0 0 #db2777 !important;
+}
+.xshield-hit--scam {
+  background: linear-gradient(90deg, #fef2f2, #fee2e2) !important;
+  box-shadow: inset 4px 0 0 #dc2626 !important;
+}
+.xshield-hit--ad {
+  background: linear-gradient(90deg, #fffbeb, #fef3c7) !important;
+  box-shadow: inset 4px 0 0 #d97706 !important;
+}
+.xshield-hit--bot {
+  background: linear-gradient(90deg, #f5f3ff, #ede9fe) !important;
+  box-shadow: inset 4px 0 0 #7c3aed !important;
+}
+/* 恢复显示的淡入 */
+.xshield-restored {
+  animation: xshield-fade-in 0.45s ease;
+}
+@keyframes xshield-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---- AI 判断引擎 (1.5.0)：四类彩色标签，底色沿用上方既有设计 ---- */
+.xshield-ai-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  vertical-align: 2px;
+  color: #fff !important;
+  text-decoration: none !important;
+  white-space: nowrap;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28);
+  animation: xshield-badge-pop 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes xshield-badge-pop {
+  from {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+}
+/* 黄推 */
+.xshield-ai-badge--porn {
+  background: linear-gradient(135deg, #ec4899, #be185d) !important;
+}
+/* 诈骗 */
+.xshield-ai-badge--scam {
+  background: linear-gradient(135deg, #f87171, #b91c1c) !important;
+}
+/* 纯广告 */
+.xshield-ai-badge--ad {
+  background: linear-gradient(135deg, #fbbf24, #b45309) !important;
+}
+/* 人机 */
+.xshield-ai-badge--bot {
+  background: linear-gradient(135deg, #a78bfa, #6d28d9) !important;
+}
+/* AI判定中 / 关键字等中性标签：流光 */
+.xshield-ai-badge--pending {
+  background: linear-gradient(90deg, #64748b, #94a3b8, #64748b) !important;
+  background-size: 200% 100%;
+  animation: xshield-ai-shimmer 1.5s linear infinite;
+}
+@keyframes xshield-ai-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* ---- 误判检查面板（左下角，给右下角的 live 状态框让位） ---- */
+#xshield-review-chip {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 2147483000;
+  padding: 8px 14px;
+  border: none;
+  border-radius: 999px;
+  background: #1d9bf0;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+}
+#xshield-review-chip:hover {
+  filter: brightness(1.08);
+}
+#xshield-review-panel {
+  position: fixed;
+  left: 16px;
+  bottom: 60px;
+  z-index: 2147483000;
+  width: 380px;
+  max-width: calc(100vw - 32px);
+  max-height: min(62vh, 520px);
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  background: #15202b;
+  color: #e7e9ea;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+.xshield-review-title {
+  padding: 12px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  border-bottom: 1px solid #38444d;
+}
+.xshield-review-list {
+  overflow-y: auto;
+  padding: 4px 0 8px;
+}
+.xshield-review-row {
+  padding: 10px 16px;
+  border-bottom: 1px solid #273340;
+}
+.xshield-review-row:last-child {
+  border-bottom: none;
+}
+.xshield-review-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.xshield-review-who {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.xshield-review-text {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: #9ca7b1;
+  margin-bottom: 6px;
+  word-break: break-word;
+}
+.xshield-review-actions {
+  display: flex;
+  gap: 8px;
+}
+.xshield-review-actions button {
+  padding: 4px 12px;
+  border: 1px solid #536471;
+  border-radius: 999px;
+  background: transparent;
+  color: #e7e9ea;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.xshield-review-actions button:hover {
+  background: rgba(239, 243, 244, 0.1);
+}
+.xshield-review-empty {
+  padding: 16px;
+  font-size: 13px;
+  color: #9ca7b1;
+  text-align: center;
+}
+
+/* ---- live 状态框（1.6.0）：半透明悬浮 HUD ---- */
+#xshield-hud {
+  position: fixed;
+  right: 20px;
+  top: 20px;
+  z-index: 2147483000;
+  width: 228px;
+  padding: 10px 13px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  background: rgba(24, 25, 44, 0.78);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  color: #eceef4;
+  font-size: 11px;
+  line-height: 1.3;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  user-select: none;
+}
+.xshield-hud-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.xshield-hud-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #8b7cf7;
+  animation: xshield-hud-pulse 1.6s ease-in-out infinite;
+}
+@keyframes xshield-hud-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+.xshield-hud-title {
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.xshield-hud-reset {
+  margin-left: auto;
+  padding: 1px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 999px;
+  background: transparent;
+  color: #eceef4;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.xshield-hud-reset:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+.xshield-hud-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px 8px;
+  margin-top: 9px;
+}
+.xshield-hud-tile strong {
+  display: block;
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.xshield-hud-tile span {
+  display: block;
+  margin-top: 1px;
+  font-size: 10.5px;
+  color: #9aa0b5;
+}
+.xshield-hud-foot {
+  margin-top: 9px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 10.5px;
+  color: #9aa0b5;
+  line-height: 1.5;
 }

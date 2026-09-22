@@ -112,21 +112,29 @@ describe('content script end-to-end', () => {
     const community = document.getElementById('community1');
     const nickname = document.getElementById('nickname1');
 
-    expect(spam?.classList.contains('x-comment-blocker-hidden')).toBe(true);
-    expect(normal?.classList.contains('x-comment-blocker-hidden')).toBe(false);
-    expect(main?.classList.contains('x-comment-blocker-hidden')).toBe(false);
+    expect(spam?.classList.contains('xshield-marked')).toBe(true);
+    expect(normal?.classList.contains('xshield-marked')).toBe(false);
+    expect(main?.classList.contains('xshield-marked')).toBe(false);
     // Layer 3 — nickname detection: clean text, spam display name → hidden.
-    expect(nickname?.classList.contains('x-comment-blocker-hidden')).toBe(true);
+    expect(nickname?.classList.contains('xshield-marked')).toBe(true);
     // Community-shared handle: clean text still hidden + auto-block flagged.
-    expect(community?.classList.contains('x-comment-blocker-hidden')).toBe(true);
+    expect(community?.classList.contains('xshield-marked')).toBe(true);
 
     const record = sentMessages.find((message) => message.action === 'recordSpam') as
-      | { items?: Array<{ user?: string; text?: string; isAutoBlock?: boolean; displayName?: string }> }
+      | {
+          items?: Array<{
+            user?: string;
+            text?: string;
+            isAutoBlock?: boolean;
+            displayName?: string;
+          }>;
+        }
       | undefined;
     expect(record).toBeDefined();
     const item = record?.items?.[0];
     expect(item?.user).toBe('spammer1');
     expect(item?.text).toContain('比她好看的没她骚');
-    expect(item?.isAutoBlock).toBe(true);
+    // 1.8.0 默认「仅隐藏」：记录照写，但不进入拉黑队列
+    expect(item?.isAutoBlock).toBe(false);
   });
 });

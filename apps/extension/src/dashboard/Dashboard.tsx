@@ -26,6 +26,7 @@ import {
   Trash2,
   Upload,
   X,
+  Zap,
 } from 'lucide-react';
 import {
   DEFAULT_CLOUD_OWNER_REPO,
@@ -89,6 +90,19 @@ const DEFAULTS: Record<string, unknown> = {
   statsBlocksByDay: {} as Record<string, number>,
   currentUsername: '',
   currentUserSeenAt: 0,
+  // AI 判断引擎 (1.5.0)
+  aiEngine: 'keyword',
+  aiApiKey: '',
+  aiModel: 'jev-latest',
+  aiMinConfidence: 0.7,
+  aiScanAll: true,
+  aiAutoBlock: false,
+  aiCatPorn: true,
+  aiCatScam: true,
+  aiCatAd: true,
+  aiCatBot: true,
+  keywordAutoBlock: false,
+  aiLearnKeywords: true,
 };
 
 function DataPanel({
@@ -532,9 +546,16 @@ export default function Dashboard() {
         blockEmoji: Boolean(state.blockEmoji),
         blockSpecialChars: Boolean(state.blockSpecialChars),
         blockGrok: Boolean(state.blockGrok),
+        keywordAutoBlock: state.keywordAutoBlock !== false,
         cloudEnabled: Boolean(state.cloudEnabled),
         cloudOwnerRepo: String(state.cloudOwnerRepo ?? ''),
         language: String(state.language ?? 'system'),
+        // AI 引擎设置进诊断，但 API Key 属于凭据，绝不导出。
+        aiEngine: String(state.aiEngine ?? 'keyword'),
+        aiScanAll: state.aiScanAll !== false,
+        aiAutoBlock: state.aiAutoBlock !== false,
+        aiMinConfidence: Number(state.aiMinConfidence ?? 0.7),
+        aiLearnKeywords: state.aiLearnKeywords !== false,
       },
       sync: {
         lastSyncTime: Number(state.lastSyncTime ?? 0),
@@ -617,6 +638,73 @@ export default function Dashboard() {
   const [queueFilter, setQueueFilter] = useState('all');
   const [queuePage, setQueuePage] = useState(0);
   const [showToken, setShowToken] = useState(false);
+  // AI 引擎 (1.5.0)：连通测试 + 会话用量
+  const [showAiKey, setShowAiKey] = useState(false);
+  const [aiTesting, setAiTesting] = useState(false);
+  const [aiTestResult, setAiTestResult] = useState('');
+  const [aiStats, setAiStats] = useState<{
+    calls: number;
+    cacheHits: number;
+    errors: number;
+  } | null>(null);
+
+  const refreshAiStats = (): void => {
+    try {
+      void chrome.runtime
+        .sendMessage({ action: 'aiStats' })
+        .then((resp) => {
+          if ((resp as { ok?: boolean })?.ok) {
+            setAiStats(
+              (resp as { stats: { calls: number; cacheHits: number; errors: number } }).stats,
+            );
+          }
+        })
+        .catch(() => {});
+    } catch {
+      // extension context gone
+    }
+  };
+
+  useEffect(() => {
+    refreshAiStats();
+  }, []);
+
+  const testAiEngine = (): void => {
+    setAiTesting(true);
+    setAiTestResult('');
+    try {
+      void chrome.runtime
+        .sendMessage({ action: 'aiTest' })
+        .then((resp) => {
+          const data = resp as
+            | {
+                ok?: boolean;
+                reason?: string;
+                verdict?: { model?: string };
+                decision?: { isSpam?: boolean; reason?: string; confidence?: number };
+              }
+            | undefined;
+          if (data?.ok) {
+            const sample = data.decision?.isSpam
+              ? `「${String(data.decision.reason)}」置信度 ${(
+                  Number(data.decision.confidence ?? 0) * 100
+                ).toFixed(0)}%`
+              : '样本未命中（判定为正常内容）';
+            setAiTestResult(`${t.aiTestOk}：${sample}（${String(data.verdict?.model ?? '')}）`);
+          } else {
+            setAiTestResult(`${t.aiTestFail}：${String(data?.reason ?? '')}`);
+          }
+        })
+        .catch(() => setAiTestResult(t.aiTestFail))
+        .finally(() => {
+          setAiTesting(false);
+          refreshAiStats();
+        });
+    } catch {
+      setAiTesting(false);
+      setAiTestResult(t.aiTestFail);
+    }
+  };
   const visibleCloudKeywords = cloudKeywords.filter((k) =>
     cloudQuery ? k.includes(cloudQuery.toLowerCase()) : true,
   );
@@ -1535,17 +1623,12 @@ export default function Dashboard() {
                     onChange={(v) => setValue('enabled', v)}
                   />
                 </label>
-                <label className="field-row compact">
-                  <span>{t.displayMode}</span>
-                  <select
-                    value={state.highlightMode ? 'highlight' : 'hide'}
-                    onChange={(e) =>
-                      setValue('highlightMode', e.currentTarget.value === 'highlight')
-                    }
-                  >
-                    <option value="hide">{t.modeHide}</option>
-                    <option value="highlight">{t.modeHighlight}</option>
-                  </select>
+                <label className="check-label">
+                  <span>{t.highlightModeLabel}</span>
+                  <Toggle
+                    checked={Boolean(state.highlightMode)}
+                    onChange={(v) => setValue('highlightMode', v)}
+                  />
                 </label>
                 <label className="field-row compact">
                   <span>{t.language}</span>
@@ -1600,7 +1683,144 @@ export default function Dashboard() {
                     onChange={(v) => setValue('blockGrok', v)}
                   />
                 </label>
+                <label className="check-label">
+                  <span>{t.keywordAutoBlockLabel}</span>
+                  <Toggle
+                    checked={state.keywordAutoBlock !== false}
+                    onChange={(v) => setValue('keywordAutoBlock', v)}
+                  />
+                </label>
               </div>
+              <p className="hint">{t.hitActionHint}</p>
+            </div>
+
+            <div className="settings-section">
+              <h3>{t.secAi}</h3>
+              <div className="settings-grid">
+                <label className="field-row compact">
+                  <span>{t.aiEngineLabel}</span>
+                  <select
+                    value={String(state.aiEngine ?? 'keyword')}
+                    onChange={(e) => setValue('aiEngine', e.currentTarget.value)}
+                  >
+                    <option value="keyword">{t.aiEngineKeyword}</option>
+                    <option value="ai">{t.aiEngineAi}</option>
+                  </select>
+                </label>
+                <label className="field-row">
+                  <span>{t.aiApiKeyLabel}</span>
+                  <span className="token-field">
+                    <input
+                      type={showAiKey ? 'text' : 'password'}
+                      value={String(state.aiApiKey ?? '')}
+                      placeholder={t.aiApiKeyPlaceholder}
+                      onChange={(e) => setValue('aiApiKey', e.currentTarget.value.trim())}
+                    />
+                    <button
+                      type="button"
+                      title={showAiKey ? t.hide : t.show}
+                      onClick={() => setShowAiKey(!showAiKey)}
+                    >
+                      {showAiKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                    <button
+                      type="button"
+                      title={t.clearToken}
+                      onClick={() => setValue('aiApiKey', '')}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </span>
+                </label>
+                <label className="field-row compact">
+                  <span>{t.aiModelLabel}</span>
+                  <input
+                    value={String(state.aiModel ?? 'jev-latest')}
+                    onChange={(e) => setValue('aiModel', e.currentTarget.value.trim())}
+                  />
+                </label>
+                <label className="field-row compact">
+                  <span>{t.aiThresholdLabel}</span>
+                  <select
+                    value={String(state.aiMinConfidence ?? 0.7)}
+                    onChange={(e) => setValue('aiMinConfidence', Number(e.currentTarget.value))}
+                  >
+                    <option value="0.6">60%</option>
+                    <option value="0.7">70%</option>
+                    <option value="0.8">80%</option>
+                    <option value="0.9">90%</option>
+                  </select>
+                </label>
+              </div>
+              <p className="hint">{t.aiCatLabel}</p>
+              <div className="settings-grid compact">
+                {(
+                  [
+                    ['aiCatPorn', t.aiCatPorn],
+                    ['aiCatScam', t.aiCatScam],
+                    ['aiCatAd', t.aiCatAd],
+                    ['aiCatBot', t.aiCatBot],
+                  ] as const
+                ).map(([key, label]) => (
+                  <label className="check-label" key={key}>
+                    <span>{label}</span>
+                    <Toggle checked={state[key] !== false} onChange={(v) => setValue(key, v)} />
+                  </label>
+                ))}
+              </div>
+              <div className="settings-grid compact">
+                <label className="check-label">
+                  <span>{t.aiScanAllLabel}</span>
+                  <Toggle
+                    checked={state.aiScanAll !== false}
+                    onChange={(v) => setValue('aiScanAll', v)}
+                  />
+                </label>
+                <label className="check-label">
+                  <span>{t.aiLearnLabel}</span>
+                  <Toggle
+                    checked={state.aiLearnKeywords !== false}
+                    onChange={(v) => setValue('aiLearnKeywords', v)}
+                  />
+                </label>
+              </div>
+              <div className="settings-grid compact">
+                <label className="check-label">
+                  <span>{t.aiAutoBlockLabel}</span>
+                  <Toggle
+                    checked={state.aiAutoBlock !== false}
+                    onChange={(v) => setValue('aiAutoBlock', v)}
+                  />
+                </label>
+              </div>
+              <p className="hint">{t.hitActionHint}</p>
+              <div className="form-grid inline">
+                <button
+                  className="plain-button"
+                  type="button"
+                  disabled={aiTesting}
+                  onClick={testAiEngine}
+                >
+                  <Zap size={16} className={aiTesting ? 'spin' : ''} />{' '}
+                  {aiTesting ? t.aiTesting : t.aiTest}
+                </button>
+                <a
+                  className="plain-button"
+                  href="https://console.typesafe.ai/keys"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <ExternalLink size={16} /> {t.aiGetKey}
+                </a>
+              </div>
+              {aiTestResult && <p className="hint">{aiTestResult}</p>}
+              <p className="hint">{t.aiHint}</p>
+              {aiStats && (
+                <p className="hint">
+                  {t.aiStatsLabel}：{t.aiStatsCalls} {aiStats.calls} · {t.aiStatsHits}{' '}
+                  {aiStats.cacheHits} · {t.aiStatsErrors} {aiStats.errors}
+                </p>
+              )}
             </div>
 
             <div className="settings-section">

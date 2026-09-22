@@ -17,6 +17,8 @@ import {
   extractCleanScreenName,
   getLocalDateString,
   getStorageDefaults,
+  invisibleCharsRegex,
+  normalizeHitText,
   parseKeywords,
   syncCloudRules,
   syncCloudHandles,
@@ -28,6 +30,16 @@ import {
   FAILURE_RETRY_HOURS,
   type BlockUserResult,
 } from './autoBlock';
+import {
+  CATEGORY_LABELS,
+  aiEngineStats,
+  clearAiCache,
+  decideVerdict,
+  requestAiJudgement,
+  resetAiStats,
+  type AiActionableCategory,
+  type AiSettings,
+} from './aiJudge';
 
 /** Pre-0.6.5 upstream keyword source (contains account-handle pollution). */
 const LEGACY_UPSTREAM_REPO = 'amahteru/x-comment-blocker';
@@ -262,6 +274,11 @@ chrome.contextMenus.onClicked.addListener((info) => {
   })();
 });
 
+// 工具栏图标点击 → 直接打开管理面板（1.6.0 起移除了弹窗下拉）。
+chrome.action.onClicked.addListener(() => {
+  void chrome.tabs.create({ url: chrome.runtime.getURL('index.html') });
+});
+
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'autoBlockWatchdog') {
     void feedCommunityHandles();
@@ -273,7 +290,12 @@ export const autoBlockManager = new AutoBlockManager(
   (name) => handleBlockUser(name, true),
   async () => {
     await ensureHistoryInitialized();
+    // 仅隐藏（1.7.0 审计）：isAutoBlock=false 的记录（关键字/AI 仅隐藏触发）
+    // 不进入拉黑管道 —— backfillFromHistory 在每次 worker 唤醒时都会用这份
+    // 名单回流排队，不过滤会把「仅隐藏」的触发重新拉黑。undefined 视为旧版
+    // 记录（默认允许）。
     return (inMemoryHistory ?? [])
+      .filter((item) => item.isAutoBlock !== false)
       .map((item) => extractCleanScreenName(item.user ?? ''))
       .filter(Boolean);
   },
@@ -381,11 +403,18 @@ const statsInitPromise = (async () => {
   }
 })();
 
-void Promise.all([normalizeStoredLists(), statsInitPromise]).then(() =>
-  autoBlockManager.init().then(() => {
+/**
+ * 启动完成信号：对账（仅隐藏清理残留排队）完成、排水开闸之前 resolve。
+ * 测试与需要确定启动时序的调用方可 await 它。
+ */
+export const backgroundReady = Promise.all([normalizeStoredLists(), statsInitPromise])
+  .then(() => autoBlockManager.init())
+  .then(async () => {
+    // 启动对账：仅隐藏模式下清掉残留排队（改默认值/重载不会触发变更事件），
+    // 之后才允许排水，否则队列里的旧条目会在用户不知情时被自动拉黑。
+    await reconcileQueueWithHideOnly();
     void autoBlockManager.process();
-  }),
-);
+  });
 
 async function blockAllHistoryUsers(
   usersToBlock: string[],
@@ -494,8 +523,229 @@ chrome.runtime.onMessage.addListener((message: Record<string, unknown>, _sender,
     ).then(sendResponse);
     return true;
   }
+  if (message.action === 'aiJudge') {
+    // keywords = 内容脚本词库命中的词（预筛信号），随文本一起交给模型。
+    const keywords = Array.isArray(message.keywords)
+      ? (message.keywords as unknown[])
+          .map((k) => String(k))
+          .filter(Boolean)
+          .slice(0, 5)
+      : [];
+    const author = String(message.author ?? '').slice(0, 80);
+    void handleAiJudge(
+      String(message.text ?? ''),
+      message.priority === true,
+      keywords,
+      author,
+    ).then(sendResponse);
+    return true;
+  }
+  if (message.action === 'aiTest') {
+    void handleAiTest(String(message.text ?? '')).then(sendResponse);
+    return true;
+  }
+  if (message.action === 'learnKeywords') {
+    void handleLearnKeywords(String(message.text ?? ''), String(message.nickname ?? '')).then(
+      sendResponse,
+    );
+    return true;
+  }
+  if (message.action === 'aiStats') {
+    sendResponse({ ok: true, stats: aiEngineStats() });
+    return false;
+  }
+  if (message.action === 'aiClearCache') {
+    clearAiCache();
+    sendResponse({ ok: true });
+    return false;
+  }
+  if (message.action === 'aiResetStats') {
+    // 页面 live 状态框的 reset：只清会话计数，不动队列与缓存。
+    resetAiStats();
+    sendResponse({ ok: true, stats: aiEngineStats() });
+    return false;
+  }
   return false;
 });
+
+// ---------------------------------------------------------------------------
+// AI 判断引擎 (1.5.0): TypeSafe System One 判定入口。内容脚本把回帖文本发过来，
+// 这里读设置 → 调 AI（队列/缓存/重试都在 aiJudge 模块内）→ 返回结构化裁决。
+// ---------------------------------------------------------------------------
+
+let aiLastErrorLoggedAt = 0;
+
+export async function readAiSettings(): Promise<{
+  enabled: boolean;
+  autoBlock: boolean;
+  settings: AiSettings;
+}> {
+  const stored = await chrome.storage.local.get(
+    getStorageDefaults(
+      'aiEngine',
+      'aiApiKey',
+      'aiModel',
+      'aiMinConfidence',
+      'aiAutoBlock',
+      'aiCatPorn',
+      'aiCatScam',
+      'aiCatAd',
+      'aiCatBot',
+    ),
+  );
+  const apiKey = String(stored.aiApiKey ?? '').trim();
+  const categories: Record<AiActionableCategory, boolean> = {
+    porn: stored.aiCatPorn !== false,
+    scam: stored.aiCatScam !== false,
+    ad: stored.aiCatAd !== false,
+    bot: stored.aiCatBot !== false,
+  };
+  return {
+    enabled: stored.aiEngine === 'ai' && Boolean(apiKey),
+    autoBlock: stored.aiAutoBlock !== false,
+    settings: {
+      apiKey,
+      model: String(stored.aiModel ?? '').trim() || 'jev-latest',
+      minConfidence: Number(stored.aiMinConfidence ?? 0.7),
+      categories,
+    },
+  };
+}
+
+/** Content-script judgement request: {ok, decision?, verdict?} or {ok:false, reason}. */
+async function handleAiJudge(
+  text: string,
+  priority: boolean,
+  keywordHits: string[] = [],
+  authorName = '',
+): Promise<Record<string, unknown>> {
+  const config = await readAiSettings();
+  if (!config.enabled) {
+    return { ok: false, reason: config.settings.apiKey ? 'disabled' : 'nokey' };
+  }
+  try {
+    const verdict = await requestAiJudgement(text, config.settings, {
+      priority,
+      keywordHits,
+      authorName,
+    });
+    const decision = decideVerdict(
+      verdict,
+      {
+        minConfidence: config.settings.minConfidence,
+        categories: config.settings.categories,
+      },
+      keywordHits,
+    );
+    // meta = 会话用量快照（tokens/延迟/缓存命中），驱动页面上的 live 状态框。
+    return { ok: true, verdict, decision, autoBlock: config.autoBlock, meta: aiEngineStats() };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // Throttle identical failures so a bad key doesn't flood the activity log.
+    if (Date.now() - aiLastErrorLoggedAt > 300_000) {
+      aiLastErrorLoggedAt = Date.now();
+      void addLog('warn', 'system', `AI 判定失败：${msg}`);
+    }
+    return { ok: false, reason: msg };
+  }
+}
+
+/**
+ * 本地学习回路（1.8.0）：人工确认「垃圾」后，从回帖文本与作者昵称中提取
+ * 特征关键词合并进「我的词库」—— 下次同类内容由关键字层直接秒触发（词库
+ * 命中同时作为 AI 判定的上下文信号）。TypeSafe API 无状态，学习发生在本地。
+ * 提取保守：整句精确关键词（4-80 字）+ 昵称中的字符段（2-12 字，最多 3 个），
+ * 用户可在「我的词库」里删除任何自动学习项。
+ */
+const LEARNED_KEYWORDS_CAP = 5000;
+
+export function extractLearnedKeywords(text: string, nickname: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (k: string): void => {
+    const key = k.replaceAll(invisibleCharsRegex, '').trim();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push(key);
+  };
+  const cleanText = normalizeHitText(text);
+  if (cleanText.length >= 4 && cleanText.length <= 80) push(cleanText);
+  // 昵称按非文字符号切段（emoji/♥/🍑 等分隔符），保留 2-12 字的实体段。
+  const nickSegs = nickname
+    .replaceAll(invisibleCharsRegex, '')
+    .split(/[^\u4e00-\u9fa5a-zA-Z0-9]+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 2 && t.length <= 12 && !/^\d+$/.test(t))
+    .slice(0, 3);
+  for (const seg of nickSegs) push(seg);
+  return out.slice(0, 5);
+}
+
+async function handleLearnKeywords(text: string, nickname: string): Promise<{ learned: string[] }> {
+  try {
+    const stored = await chrome.storage.local.get(
+      getStorageDefaults('keywords', 'aiLearnKeywords'),
+    );
+    if (stored.aiLearnKeywords === false) return { learned: [] };
+    const candidates = extractLearnedKeywords(text, nickname);
+    if (candidates.length === 0) return { learned: [] };
+    const existing = parseKeywords((stored.keywords as string) ?? '');
+    const existingSet = new Set(existing);
+    const added = candidates.filter(
+      (k) => !existingSet.has(k) && !existingSet.has(k.toLowerCase()),
+    );
+    if (added.length === 0) return { learned: [] };
+    if (existing.length + added.length > LEARNED_KEYWORDS_CAP) {
+      void addLog(
+        'warn',
+        'settings',
+        `学习关键词失败：我的词库已达上限 ${LEARNED_KEYWORDS_CAP} 条`,
+      );
+      return { learned: [] };
+    }
+    await chrome.storage.local.set({ keywords: [...existing, ...added].join('\n') });
+    void addLog('info', 'settings', `人工确认学习关键词：${added.join('、')}`);
+    return { learned: added };
+  } catch (e) {
+    console.warn('[XShield] keyword learning skipped:', e);
+    return { learned: [] };
+  }
+}
+
+/** Settings-page connectivity test: judges a fixed sample regardless of engine toggle. */
+async function handleAiTest(text: string): Promise<Record<string, unknown>> {
+  const config = await readAiSettings();
+  if (!config.settings.apiKey) {
+    return { ok: false, reason: '请先填写 TypeSafe API Key' };
+  }
+  const sample =
+    text.trim() || '恭喜你被选中！添加客服微信领88元红包，限时一天，加我马上到账 https://t.co/xxxx';
+  try {
+    const verdict = await requestAiJudgement(sample, config.settings, {
+      priority: true,
+      keywordHits: [],
+      authorName: '',
+    });
+    const decision = decideVerdict(
+      verdict,
+      {
+        minConfidence: config.settings.minConfidence,
+        categories: config.settings.categories,
+      },
+      [],
+    );
+    void addLog(
+      'info',
+      'system',
+      `AI 引擎连通测试成功（${verdict.model}，样本判定：${decision.isSpam ? decision.reason : CATEGORY_LABELS[verdict.category]}）`,
+    );
+    return { ok: true, verdict, decision };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    void addLog('error', 'system', `AI 引擎连通测试失败：${msg}`);
+    return { ok: false, reason: msg };
+  }
+}
 
 // Intervention fault-tolerance: whitelisting a user must instantly cancel
 // their pending auto-block — the queue, ledger and whitelist can overlap, and
@@ -505,7 +755,60 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes.whitelist) {
     void autoBlockManager.purgeWhitelistedFromQueue((changes.whitelist.newValue as string[]) ?? []);
   }
+  // 命中处理开关变更 → 对账：两个引擎都是「仅隐藏」时，清空非社区排队
+  //（单边关闭时无法区分队列条目来源，不做部分清理）。
+  if (changes.keywordAutoBlock || changes.aiAutoBlock) {
+    void reconcileQueueWithHideOnly();
+  }
 });
+
+/**
+ * 仅隐藏一致性（1.7.0 审计 G1）：把待拉黑队列里的非社区条目全部撤回。
+ * 社区共享名单是文档化的例外（共享黑名单本就是确认拉黑数据），保持排队。
+ * 已执行完的拉黑不受影响（账本不动）。
+ */
+/**
+ * 队列对账（1.8.0）：两个引擎都是「仅隐藏」时，队列里不该有任何自动触发条目
+ * —— 无论它们是切换设置前、还是改默认值/重载前进来的。每次 worker 启动与
+ * 开关变更都会执行；社区共享名单例外（确认拉黑数据）。
+ */
+export async function reconcileQueueWithHideOnly(): Promise<number> {
+  const stored = await chrome.storage.local.get(
+    getStorageDefaults('keywordAutoBlock', 'aiAutoBlock'),
+  );
+  const keywordOff = stored.keywordAutoBlock === false;
+  const aiOff = stored.aiAutoBlock === false;
+  if (!(keywordOff && aiOff)) return 0;
+  return purgeQueueOnHideOnly();
+}
+
+export async function purgeQueueOnHideOnly(): Promise<number> {
+  try {
+    const stored = await chrome.storage.local.get(
+      getStorageDefaults('autoBlockQueue', 'communityHandles'),
+    );
+    const community = new Set(
+      ((stored.communityHandles as string[]) ?? []).map(extractCleanScreenName).filter(Boolean),
+    );
+    const queue = (stored.autoBlockQueue as string[]) ?? [];
+    const drop = queue.filter((name) => !community.has(name));
+    if (drop.length > 0) {
+      // manager 持有自己的内存队列：先从存储重载再删除，避免之后的
+      // saveState 用旧的内存队列把撤回的条目写回去（冷启动/热重启都成立）。
+      await autoBlockManager.refreshFromStorage();
+      await autoBlockManager.removeManyFromQueue(drop);
+      void addLog(
+        'info',
+        'block',
+        `切换为「仅隐藏」：撤回 ${drop.length} 个自动触发用户的待拉黑排队（社区共享名单除外）`,
+      );
+    }
+    return drop.length;
+  } catch (e) {
+    console.warn('[XShield] hide-only queue purge skipped:', e);
+    return 0;
+  }
+}
 
 async function notifyContentScripts(message: Record<string, unknown>): Promise<void> {
   const tabs = await chrome.tabs.query({
@@ -878,7 +1181,6 @@ const COMMUNITY_HISTORY_PREFIX = 'community:';
  * The cloud handles.txt is the permanent master — local state is a cache.
  */
 async function feedCommunityHandles(): Promise<void> {
-  console.log('DBG feeder start');
   try {
     const stored = await chrome.storage.local.get(
       getStorageDefaults(
@@ -951,9 +1253,7 @@ async function feedCommunityHandles(): Promise<void> {
         void flushSpamBatch();
       }, 50);
     }
-    console.log('DBG feeder calling enqueueBatch');
     await autoBlockManager.enqueueBatch(feed);
-    console.log('DBG feeder enqueueBatch returned');
     void addLog('info', 'block', `社区名单喂送 ${feed.length} 个进入待拉黑`);
   } catch (e) {
     console.warn('[X-Blocker] community feed skipped:', e);

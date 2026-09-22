@@ -30,12 +30,14 @@ community blocklist, whitelist, keyword libraries, logs, and settings.
 | 下载云端词库与共享黑名单 | `api.github.com` / `fastly.jsdelivr.net`（项目仓库的 keywords.txt / handles.txt） | 自动同步（6 小时）与手动「立即同步」 |
 | 真实拉黑 / 解除拉黑 | `x.com` / `twitter.com` 的 `blocks/create.json`、`destroy.json` | 触发名单自动执行，或用户在面板点击 |
 | 共享拉黑名单（可选） | `api.github.com`（项目仓库 handles.txt） | **仅**用户主动点击「共享拉黑名单到项目仓库」并配置了 GitHub Token |
+| AI 判断引擎（可选，1.5.0） | `api.typesafe.ai`（TypeSafe System One 判定接口） | **仅**用户在总设置切换到「AI 智能判断」并配置自己的 API Key 后；发送内容为**回帖文本（截断至 1000 字符）+ 作者昵称/@handle + 命中的词库词（最多 5 个）**，用于让模型结合词库信号判定；带本地缓存与限速，判定结果只存本地，API Key 只存本地 |
 
 | Purpose | Target | When |
 |---------|--------|------|
 | Download cloud library & shared blocklist | `api.github.com` / `fastly.jsdelivr.net` | automatic (6 h) + manual sync |
 | Block / unblock on X | `x.com` / `twitter.com` block endpoints | on queued auto-blocks or dashboard clicks |
 | Share blocked handles (optional) | `api.github.com` | **only** on explicit button click with a user-configured token |
+| AI engine (optional, 1.5.0) | `api.typesafe.ai` (TypeSafe System One) | **only** after the user switches to AI mode and configures their own API key; sends **reply text (truncated to 1000 chars) + author display name/@handle + matched blocklist keywords (up to 5)** so the model can judge with keyword context; cached and rate-limited locally, verdicts stay local |
 
 ## 3. Cookies / Cookie 使用
 

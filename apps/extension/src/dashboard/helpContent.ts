@@ -22,7 +22,7 @@ export const helpManuals: Record<HelpLanguage, HelpManual> = {
         body: [
           'Load the extension from apps/extension/dist in chrome://extensions with Developer mode enabled.',
           'Log in to X/Twitter in the same Chrome profile before using real block mode.',
-          'Open Dashboard from the extension popup.',
+          'Open Dashboard by clicking the toolbar icon (it opens the dashboard directly).',
         ],
       },
       {

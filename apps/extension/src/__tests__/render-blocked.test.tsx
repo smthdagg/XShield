@@ -18,9 +18,22 @@ const storageData: Record<string, unknown> = {
 };
 
 const chromeMock = {
-  runtime: { id: 't', getManifest: () => ({ version: 'test' }), getURL: (p: string) => p, sendMessage: vi.fn(async () => ({ success: true })), onMessage: { addListener: vi.fn() } },
+  runtime: {
+    id: 't',
+    getManifest: () => ({ version: 'test' }),
+    getURL: (p: string) => p,
+    sendMessage: vi.fn(async () => ({ success: true })),
+    onMessage: { addListener: vi.fn() },
+  },
   storage: {
-    local: { get: vi.fn(async (keys: Record<string, unknown>) => { const o: Record<string, unknown> = {}; for (const k of Object.keys(keys)) o[k] = storageData[k] ?? keys[k]; return o; }), set: vi.fn(async (i: Record<string, unknown>) => Object.assign(storageData, i)) },
+    local: {
+      get: vi.fn(async (keys: Record<string, unknown>) => {
+        const o: Record<string, unknown> = {};
+        for (const k of Object.keys(keys)) o[k] = storageData[k] ?? keys[k];
+        return o;
+      }),
+      set: vi.fn(async (i: Record<string, unknown>) => Object.assign(storageData, i)),
+    },
     onChanged: { addListener: vi.fn(), removeListener: vi.fn() },
   },
 };
@@ -34,13 +47,21 @@ describe('blockedLog page renders', () => {
     const root = createRoot(container);
     const { default: Dashboard } = await import('../dashboard/Dashboard');
     await act(async () => root.render(<Dashboard />));
-    await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30));
+    });
 
     // switch to blockedLog page
-    const navBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === '拉黑记录');
+    const navBtn = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent === '拉黑记录',
+    );
     expect(navBtn).toBeDefined();
-    await act(async () => { navBtn!.click(); });
-    await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+    await act(async () => {
+      navBtn!.click();
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30));
+    });
 
     const buttons = Array.from(container.querySelectorAll('button'));
     // every text button must have non-empty text and no replacement chars;

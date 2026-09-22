@@ -16,6 +16,18 @@
 
 所有人拉黑的数据可**手动共享**进社区共享黑名单仓库：你在设置页「同步与共享」填好 GitHub Token 后点「共享拉黑名单」上传；其他用户点「同步黑名单」**手动拉取**后生效。**同步与共享全部为手动操作，无自动同步。**
 
+### AI 判断引擎（可选，1.5.0+）
+
+关键字触发是默认引擎，开箱即用。想要更准的判断，可在**总设置 →「AI 判断引擎」**切换为 **AI 智能判断**（基于 [TypeSafe System One / Jev 模型](https://docs.typesafe.ai/introduction)）：
+
+1. 在总设置粘贴你自己的 TypeSafe API Key（[console.typesafe.ai/keys](https://console.typesafe.ai/keys) 获取，只存本地），点「测试连通」确认；
+2. AI 会对每条回帖并行判定**黄推 / 诈骗 / 纯广告 / 人机**四类并打分，置信度达到阈值（默认 70%）才处理，宁漏放不误杀；
+3. 阅读时每条判定回帖实时打上**四类彩色标签**（黄推=粉、诈骗=红、纯广告=橙、人机=紫，高亮模式按类别着色），隐藏/高亮的底色设计保持不变；关键字仍作为基础信号——命中先挂起等 AI 裁决（AI 可否决关键字误报），干净回帖静默扫描兜底（可关闭省配额）；
+4. **命中处理双选择**：AI 引擎与关键字引擎各自可选「仅隐藏（不拉黑）」或「隐藏并拉黑」（默认）；
+4. 看到疑似误判？页面右下角「🛡 X护盾 · 已隐藏 N 条」面板可以查看每条被隐藏的内容，「恢复显示」立即撤回并退出待拉黑，「白名单」永久豁免。
+
+不填 API Key 时保持关键字引擎即可，一切照旧。
+
 ### 安装（解压即用）
 
 **方式 A：从 Release 下载安装包（推荐）**
@@ -78,7 +90,7 @@ pnpm build        # 产物：apps/extension/dist
 
 ### 隐私
 
-所有数据只存在你的浏览器本地。联网仅三类：下载云端词库/黑名单（手动同步时）、X 拉黑接口、以及你主动点击的 GitHub 共享上传（可选功能，不填 Token 不上传）。
+所有数据只存在你的浏览器本地。联网仅四类：下载云端词库/黑名单（手动同步时）、X 拉黑接口、你主动点击的 GitHub 共享上传（可选功能，不填 Token 不上传）、以及**可选的** AI 判断请求（仅在你切换到 AI 引擎并填入自己的 TypeSafe API Key 后，回帖文本截断后发送至 api.typesafe.ai，结果只存本地；默认关键字引擎不产生该请求）。
 
 ### 支持项目
 
@@ -95,6 +107,18 @@ MIT License，详见 [LICENSE](LICENSE)。
 ### What it is
 
 A browser extension that protects your X (Twitter) timeline: it auto-hides spam replies in comment sections, queues the offending accounts for a real block, and blocks them at a safe pace — plus an optional manually-synced community blocklist.
+
+### AI engine (optional, 1.5.0+)
+
+Keyword triggering is the default engine and works out of the box. For sharper judgement, switch to **AI judgement** under Settings → **AI engine** (powered by [TypeSafe System One / Jev](https://docs.typesafe.ai/introduction)):
+
+1. Paste your own TypeSafe API Key (get one at [console.typesafe.ai/keys](https://console.typesafe.ai/keys), stored locally) and hit "Test connection";
+2. The AI classifies every reply into **porn-bait / scam / pure ads / bot** with a score; only verdicts above the confidence threshold (default 70%) are acted on;
+3. While reading, flagged replies get a real-time **colored tag** (porn-bait=pink, scam=red, ads=orange, bot=purple; highlight mode tints per category); hide/highlight styling stays unchanged; keywords remain the base layer — a keyword hit is held for the AI verdict (the AI can veto false positives), clean replies get one silent scan (toggleable to save quota);
+4. **Hit action, per engine**: both the AI and keyword engines offer "hide only" vs "hide + queue for block" (default);
+4. Suspicious hide? Open the "🛡 XShield · N hidden" panel at the bottom-right, **Restore** to unhide and leave the pending queue, or **Whitelist** to exempt the author permanently.
+
+No API key? Keep the keyword engine — everything works as before.
 
 ### Install (unzip & load)
 
@@ -158,7 +182,7 @@ Then load `apps/extension/dist` (steps 3–4 of Option A). Building requires Nod
 
 ### Privacy
 
-Everything is stored locally in your browser. Network requests: cloud library/blocklist downloads (on manual sync), the X block endpoint, and optional GitHub sharing uploads (only on explicit click with a token).
+Everything is stored locally in your browser. Network requests: cloud library/blocklist downloads (on manual sync), the X block endpoint, optional GitHub sharing uploads (only on explicit click with a token), and — **optionally** — AI judgement requests (only after you switch to the AI engine with your own TypeSafe API key; reply text is truncated and sent to api.typesafe.ai, verdicts stay local). The default keyword engine makes no such request.
 
 ### License
 

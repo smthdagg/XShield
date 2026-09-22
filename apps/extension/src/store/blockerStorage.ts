@@ -18,6 +18,11 @@ function cloudCdnUrl(ownerRepo: string): string {
 // eslint-disable-next-line no-misleading-character-class
 export const invisibleCharsRegex = /\p{Default_Ignorable_Code_Point}/gv;
 
+/** 命中文本归一化（去不可见字符 + 压空白）：关键字匹配/AI 判定/记录共用的口径。 */
+export function normalizeHitText(text: string): string {
+  return (text ?? '').replaceAll(invisibleCharsRegex, '').replace(/\s+/gv, ' ').trim();
+}
+
 const fastHandleRegex = /^[@/]?([a-zA-Z0-9_]{1,15})$/;
 
 export function isKeywordRegex(k: string): boolean {
@@ -86,6 +91,25 @@ const STORAGE_DEFAULTS: Record<string, unknown> = {
   currentUserSeenAt: 0,
   // XShield extension keys (not part of 1.4.3)
   highlightMode: false,
+  // AI 判断引擎 (1.5.0): 'keyword' = 关键字触发（默认，行为不变）；
+  // 'ai' = TypeSafe System One 判定（需在设置中填写 API Key）。
+  // 关键字始终是基础信号；AI 模式下由 AI 对分类与是否隐藏做最终裁决。
+  aiEngine: 'keyword',
+  aiApiKey: '',
+  aiModel: 'jev-latest',
+  aiMinConfidence: 0.7,
+  aiScanAll: true,
+  // AI 引擎命中处理 (1.8.0 默认改为仅隐藏)：false = 只隐藏/打标，不进拉黑队列。
+  aiAutoBlock: false,
+  aiCatPorn: true,
+  aiCatScam: true,
+  aiCatAd: true,
+  aiCatBot: true,
+  // 本地学习回路 (1.8.0)：人工确认「垃圾」时自动提取特征关键词进「我的词库」。
+  aiLearnKeywords: true,
+  // 关键字引擎命中处理 (1.8.0 默认改为仅隐藏)：true = 隐藏并进入自动拉黑队列；
+  // false = 仅隐藏/打标（默认）。社区共享名单不受此开关影响（始终进队列）。
+  keywordAutoBlock: false,
 };
 
 export function getStorageDefaults(...keys: string[]): Record<string, unknown> {

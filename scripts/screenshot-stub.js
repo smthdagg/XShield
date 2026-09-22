@@ -55,10 +55,17 @@ window.chrome = {
 window.addEventListener('DOMContentLoaded', function () {
   var view = new URLSearchParams(location.search).get('view');
   if (!view) return;
-  var map = { triggered: '触发记录', blockedLog: '拉黑记录', whitelist: '白名单', rules: '规则与同步', logs: '状态与日志', settings: '总设置' };
-  var label = map[view];
+  var map = {
+    triggered: ['触发记录', 'Triggered Users'],
+    blockedLog: ['拉黑记录', 'Blocked Log'],
+    whitelist: ['白名单', 'Whitelist'],
+    rules: ['规则与同步', 'Rules & Sync'],
+    logs: ['状态与日志', 'Status & Logs'],
+    settings: ['总设置', 'Settings']
+  };
+  var labels = map[view];
   var timer = setInterval(function () {
-    var btn = Array.prototype.slice.call(document.querySelectorAll('.nav-list button')).find(function (b) { return b.textContent.indexOf(label) !== -1; });
+    var btn = Array.prototype.slice.call(document.querySelectorAll('.nav-list button')).find(function (b) { return labels.some(function (l) { return b.textContent.indexOf(l) !== -1; }); });
     if (btn) { clearInterval(timer); btn.click(); }
   }, 100);
   setTimeout(function () { clearInterval(timer); }, 10000);

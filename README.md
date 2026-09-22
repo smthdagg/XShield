@@ -1,5 +1,25 @@
 # X护盾（XShield）
 
+<div align="center">
+
+**开源的 X 评论区 AI 反垃圾扩展 —— 黄推 / 诈骗 / 纯广告 / 人机，一律看得见地挡在门外**
+
+[![CI](https://github.com/smthdagg/XShield/actions/workflows/ci.yml/badge.svg)](https://github.com/smthdagg/XShield/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/badge/release-v1.8.0-blue.svg)](https://github.com/smthdagg/XShield/releases/tag/v1.8.0)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Chrome](https://img.shields.io/badge/Chrome-Manifest%20V3-4285F4.svg?logo=googlechrome)](https://developer.chrome.com/docs/extensions/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6.svg?logo=typescript)](apps/extension)
+[![React 18](https://img.shields.io/badge/React-18-61DAFB.svg?logo=react)](apps/extension)
+[![GitHub stars](https://img.shields.io/github/stars/smthdagg/XShield?style=flat&logo=github)](https://github.com/smthdagg/XShield/stargazers)
+[![LINUX.DO](https://img.shields.io/badge/LINUX.DO-community-1f1f1f)](https://linux.do/)
+
+[中文图文教程](docs/USER_GUIDE.zh-CN.md) · [English Guide](docs/USER_GUIDE.en.md) · [项目主要功能与特点](docs/项目主要功能与特点.md) · [隐私说明](docs/PRIVACY.md) · [下载安装包](https://github.com/smthdagg/XShield/releases/tag/v1.8.0)
+
+![X护盾判定过程示意](docs/images/timeline-demo.png)
+
+</div>
+
+
 一款保护 X（Twitter）浏览体验的浏览器扩展：自动识别并隐藏评论区垃圾内容，把垃圾账号送入待拉黑名单，按安全节奏真实拉黑，并支持社区共享黑名单。
 
 ---

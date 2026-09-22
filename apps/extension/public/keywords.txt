@@ -567,3 +567,72 @@ SingLinkVPN
 女仆需要
 附近哥哥
 无偿约
+/\btrading\s+(platform|bot|signals?)\b/i
+onlyfans
+sugar daddy
+sugar baby
+seed phrase
+nudes
+escort
+hookup
+f4f
+follow4follow
+follow for follow
+follow back
+make money online
+passive income
+check my bio
+click my profile
+fixed match
+betting tips
+join my telegram
+whatsapp group
+free gift card
+giveaway winner
+dm me for
+forex signals
+crypto signals
+cashapp me
+cash app me
+sub to my
+subscribe to my channel
+/[o0]nly\s?f[a4]ns\b/i
+/\bsugar\s+(daddy|mommy|baby)\b/i
+/\bseed\s*phrase\b/i
+/\bfree\s+(nudes|pics|videos|premium)\b/i
+/\bnudes?\s+(for|in\s+dm)\b/i
+/\b(dm|msg|message)\s+me\s+for\b/i
+/\b(cash\s?app|venmo|paypal)\s+(me|us)\b/i
+/\bfollow\s+(me\s+)?back\b/i
+/\bfollow\s+for\s+follow\b/i
+/\bf4f\b/i
+/\bmake\s+money\s+(online|fast|from\s+home)\b/i
+/\bpassive\s+income\b/i
+/\bearn\s+(\$|usd|\d)/i
+/\b(crypto|btc|eth|nft)\s+(giveaway|airdrop)\b/i
+/\b(claim|win)\s+(your\s+)?(prize|reward|free)\b/i
+/\byou'?ve\s+(been\s+)?(selected|won)\b/i
+/\b(seed|recovery)\s+(phrase|expert)\b/i
+/\bwallet\s+(recovery|restore)\b/i
+/\bforex\s+(signals?|trader|trading)\b/i
+/\bcrypto\s+(signals?|trading|invest)/i
+/\b(fixed|rigged)\s+match(es)?\b/i
+/\bbetting\s+(tips?|expert|guide)\b/i
+/\bjoin\s+my\s+(telegram|whatsapp)\b/i
+/\bwhatsapp\s+group\b/i
+/\bcheck\s+my\s+(bio|pinned)\b/i
+/\bclick\s+(my\s+)?(bio|profile)\b/i
+/\bgrowth\s+(service|expert)\b/i
+/\b(affordable|cheap)\s+(seo|web|logo|design)\b/i
+/\bsocial\s+media\s+(manager|marketing|promoter)\b/i
+/\bcam\s+girl/i
+/\bfind\s+your\s+(match|soulmate)\b/i
+/\blocal\s+(singles|hookups?)\b/i
+/\bdating\s+site\b/i
+/\b18\+\s+(content|pics|videos)\b/i
+/\bsell(?:ing)?\s+nudes\b/i
+/\bsub2sub\b/i
+/\bfollowtrain\b/i
+/\bguaranteed\s+(wins?|profit)/i
+/\b100%\s+(win|profit|return)/i
+/\binstant\s+(payout|withdraw)/i

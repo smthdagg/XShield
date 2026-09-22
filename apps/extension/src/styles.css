@@ -1505,16 +1505,44 @@ input[type='checkbox'] {
   align-items: center;
 }
 
-/* Short selectors (display mode, language) sit side by side on one row,
-   wrapping on narrow screens. */
-.field-row.compact {
+.settings-grid > label.field-row:not(.compact) {
+  flex: 1 1 100%;
+}
+
+/* Short selectors (engine, language, threshold) get the same card look as
+   toggle pills, so mixed rows align on one baseline. */
+.settings-grid > label.field-row.compact {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: #ffffff;
+  border: 1px solid #e4eae6;
+  border-radius: 8px;
+  padding: 6px 14px;
+  min-height: 38px;
   flex: 1 1 230px;
+}
+
+.settings-grid > label.field-row.compact > span:first-child {
+  flex: 0 1 auto;
+  white-space: nowrap;
+}
+
+.settings-grid > label.field-row.compact select {
+  min-height: 30px;
+  border: none;
+  background: transparent;
+  font-weight: 600;
+  color: #1f4d38;
+  flex: 1 1 auto;
+  padding: 0 2px;
 }
 
 .settings-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 10px;
+  gap: 10px 12px;
 }
 
 .settings-grid > label {
@@ -1525,12 +1553,19 @@ input[type='checkbox'] {
   background: #ffffff;
   border: 1px solid #e4eae6;
   border-radius: 8px;
-  padding: 7px 12px;
-  min-height: 36px;
+  padding: 8px 14px;
+  min-height: 38px;
   font-size: 13px;
   color: #2c3a33;
   margin: 0;
-  width: fit-content;
+  box-sizing: border-box;
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+/* 开关类卡片：文案居左、开关贴右 */
+.settings-grid > label.check-label {
+  justify-content: space-between;
 }
 
 .settings-grid > label > span:first-child {

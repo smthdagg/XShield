@@ -20,7 +20,6 @@ import {
   initHitPresentation,
   isAuthorIgnored,
   isSessionUnhidden,
-  pruneDisconnectedHidden,
   registerHidden,
   removeBar,
   type BarInfo,
@@ -1237,7 +1236,6 @@ function filterTweets(specificTweets: Element[] | null = null): void {
     }
   }
 
-  pruneDisconnectedHidden();
   renderHud();
 
   if (pendingSpam.length > 0) {

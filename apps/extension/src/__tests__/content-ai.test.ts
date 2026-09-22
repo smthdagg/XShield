@@ -210,8 +210,7 @@ describe('content script — AI 判断引擎（全链路）', () => {
     expect(kwHit.querySelector('.xshield-bar-verdict')?.textContent).toBe('AI·诈骗 · 90%');
     expect(kwHit.querySelector('.xshield-bar-toggle')?.textContent).toBe('显示');
 
-    // 误判恢复面板 + live 状态框都在页面上。
-    expect(document.getElementById('xshield-review-chip')).not.toBeNull();
+    // live 状态框在页面上（汇总面板已移除，纠错走每条状态条按钮）。
     const hud = document.getElementById('xshield-hud');
     expect(hud).not.toBeNull();
     expect(hud?.textContent).toContain('X护盾 · live');

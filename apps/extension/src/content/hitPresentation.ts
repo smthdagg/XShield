@@ -199,13 +199,6 @@ interface HiddenEntry {
 
 const hiddenRegistry = new Map<string, HiddenEntry>();
 
-export function pruneDisconnectedHidden(): void {
-  if (hiddenRegistry.size === 0) return;
-  for (const [id, entry] of hiddenRegistry) {
-    if (entry.el && !entry.el.isConnected) hiddenRegistry.delete(id);
-  }
-}
-
 /** 登记一条被隐藏的回复（误判面板数据源）。 */
 export function registerHidden(entry: HiddenEntry): void {
   if (aiSessionUnhidden.has(entry.id) || isAuthorIgnored(entry.handle)) {
@@ -217,94 +210,6 @@ export function registerHidden(entry: HiddenEntry): void {
       hiddenRegistry.delete(id);
     }
   }
-  renderReviewChip();
-}
-
-export function renderReviewChip(): void {
-  const d = requireDeps();
-  if (!d.isAlive()) return;
-  pruneDisconnectedHidden();
-  const count = hiddenRegistry.size;
-  const chip = document.getElementById('xshield-review-chip');
-  if (count === 0) {
-    chip?.remove();
-    document.getElementById('xshield-review-panel')?.remove();
-    return;
-  }
-  if (chip instanceof HTMLButtonElement) {
-    chip.textContent = `🛡 X护盾 · 已隐藏 ${count} 条`;
-    return;
-  }
-  const created = document.createElement('button');
-  created.id = 'xshield-review-chip';
-  created.type = 'button';
-  created.textContent = `🛡 X护盾 · 已隐藏 ${count} 条`;
-  created.addEventListener('click', () => renderReviewPanel());
-  document.body.appendChild(created);
-}
-
-function renderReviewPanel(): void {
-  document.getElementById('xshield-review-panel')?.remove();
-  const panel = document.createElement('div');
-  panel.id = 'xshield-review-panel';
-  const title = document.createElement('div');
-  title.className = 'xshield-review-title';
-  title.textContent = '误判检查 · 「恢复显示」撤回隐藏并退出待拉黑';
-  panel.appendChild(title);
-  const list = document.createElement('div');
-  list.className = 'xshield-review-list';
-  const entries = Array.from(hiddenRegistry.values())
-    .sort((a, b) => b.time - a.time)
-    .slice(0, 80);
-  for (const entry of entries) {
-    const row = document.createElement('div');
-    row.className = 'xshield-review-row';
-    const head = document.createElement('div');
-    head.className = 'xshield-review-head';
-    const tag = document.createElement('span');
-    tag.className = `xshield-ai-badge xshield-ai-badge${entry.tagClass}`;
-    tag.textContent = entry.tag;
-    const who = document.createElement('span');
-    who.className = 'xshield-review-who';
-    who.textContent = `${entry.displayName || entry.handle || '未知用户'}${
-      entry.handle ? ` @${entry.handle}` : ''
-    }`;
-    head.append(tag, who);
-    const text = document.createElement('div');
-    text.className = 'xshield-review-text';
-    text.textContent = entry.text ? entry.text.slice(0, 120) : '（无文本内容）';
-    const actions = document.createElement('div');
-    actions.className = 'xshield-review-actions';
-    const restore = document.createElement('button');
-    restore.type = 'button';
-    restore.textContent = '恢复显示';
-    restore.addEventListener('click', () => {
-      restoreHiddenEntry(entry.id);
-      renderReviewPanel();
-    });
-    actions.appendChild(restore);
-    if (entry.handle) {
-      const whitelist = document.createElement('button');
-      whitelist.type = 'button';
-      whitelist.textContent = '白名单';
-      whitelist.title = '撤回隐藏，并将该用户加入白名单（永不触发）';
-      whitelist.addEventListener('click', () => {
-        whitelistHiddenEntry(entry.id);
-        renderReviewPanel();
-      });
-      actions.appendChild(whitelist);
-    }
-    row.append(head, text, actions);
-    list.appendChild(row);
-  }
-  if (entries.length === 0) {
-    const empty = document.createElement('p');
-    empty.className = 'xshield-review-empty';
-    empty.textContent = '当前页面没有已隐藏的回复。';
-    list.appendChild(empty);
-  }
-  panel.appendChild(list);
-  document.body.appendChild(panel);
 }
 
 /** 撤回一次隐藏：本次会话不再隐藏该内容，并撤回其触发记录（退出待拉黑）。 */
@@ -348,23 +253,6 @@ export function restoreHiddenEntry(id: string): void {
     }
   }
   d.removeSpamRecord(id);
-  renderReviewChip();
-}
-
-/** 撤回隐藏 + 把作者加入白名单（storage 监听器会自动重扫并清理队列）。 */
-function whitelistHiddenEntry(id: string): void {
-  const entry = hiddenRegistry.get(id);
-  if (!entry?.handle) {
-    restoreHiddenEntry(id);
-    return;
-  }
-  aiAuthorIgnored.add(entry.handle);
-  void (async () => {
-    const items = await chrome.storage.local.get({ whitelist: [] as string[] });
-    const next = Array.from(new Set([...((items.whitelist as string[]) ?? []), entry.handle]));
-    await chrome.storage.local.set({ whitelist: next });
-  })().catch(() => {});
-  restoreHiddenEntry(id);
 }
 
 // ---- 判定状态条 ----

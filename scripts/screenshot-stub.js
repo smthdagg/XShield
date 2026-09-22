@@ -45,7 +45,7 @@ window.chrome = {
         var fill = function (k) { return Object.prototype.hasOwnProperty.call(__defaults, k) ? __defaults[k] : undefined; };
         if (typeof keys === 'string') { var o = {}; o[keys] = fill(keys); return Promise.resolve(o); }
         if (Array.isArray(keys)) { var a = {}; keys.forEach(function (k) { a[k] = fill(k); }); return Promise.resolve(a); }
-        var out = {}; Object.keys(keys).forEach(function (k) { out[k] = keys[k] !== undefined ? keys[k] : fill(k); }); return Promise.resolve(out);
+        var out = {}; Object.keys(keys).forEach(function (k) { out[k] = fill(k) !== undefined ? fill(k) : keys[k]; }); return Promise.resolve(out);
       },
       set: function () { return Promise.resolve(); }
     },

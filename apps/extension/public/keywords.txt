@@ -578,7 +578,6 @@ hookup
 f4f
 follow4follow
 follow for follow
-follow back
 make money online
 passive income
 check my bio
@@ -603,7 +602,6 @@ subscribe to my channel
 /\bnudes?\s+(for|in\s+dm)\b/i
 /\b(dm|msg|message)\s+me\s+for\b/i
 /\b(cash\s?app|venmo|paypal)\s+(me|us)\b/i
-/\bfollow\s+(me\s+)?back\b/i
 /\bfollow\s+for\s+follow\b/i
 /\bf4f\b/i
 /\bmake\s+money\s+(online|fast|from\s+home)\b/i
@@ -636,11 +634,7 @@ subscribe to my channel
 /\bguaranteed\s+(wins?|profit)/i
 /\b100%\s+(win|profit|return)/i
 /\binstant\s+(payout|withdraw)/i
-giveaway
-raffle
 sweepstake
-prize pool
-cash prize
 free mint
 mint now
 allowlist
@@ -661,9 +655,7 @@ allowlist
 /\bclick\s+the\s+link\s+below\b/i
 /\b(referral|promo)\s+(code|link)\b/i
 /\bwhitelist\s+(spot|slot|live|open)\b/i
-/\blink\s+in\s+(my\s+)?bio\b/i
 /\bact\s+now\b/i
-/\b\d{1,2}%\s*off\b/i
 /\bfollowers\s+cheap\b/i
 /\bbuy\s+followers\b/i
 /\bguaranteed\s+(wins?|profit)/i

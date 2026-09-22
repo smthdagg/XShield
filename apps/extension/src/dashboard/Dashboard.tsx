@@ -1768,7 +1768,7 @@ export default function Dashboard() {
                   </label>
                 ))}
               </div>
-              <div className="settings-grid compact">
+              <div className="settings-grid stack">
                 <label className="check-label">
                   <span>{t.aiScanAllLabel}</span>
                   <Toggle
@@ -1784,7 +1784,7 @@ export default function Dashboard() {
                   />
                 </label>
               </div>
-              <div className="settings-grid compact">
+              <div className="settings-grid stack">
                 <label className="check-label">
                   <span>{t.aiAutoBlockLabel}</span>
                   <Toggle

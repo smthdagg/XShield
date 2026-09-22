@@ -994,6 +994,7 @@ input[type='checkbox'] {
 .toggle-switch {
   width: 40px;
   height: 22px;
+  flex-shrink: 0;
   border-radius: 999px;
   border: 1px solid #cfd8d2;
   background: #e4ebe6;
@@ -1477,6 +1478,15 @@ input[type='checkbox'] {
   flex: 0 0 200px;
 }
 
+.field-row {
+  min-width: 0;
+}
+
+.field-row > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .field-row input,
 .field-row select {
   flex: 1 1 240px;
@@ -1521,7 +1531,8 @@ input[type='checkbox'] {
   border-radius: 8px;
   padding: 6px 14px;
   min-height: 38px;
-  flex: 1 1 230px;
+  flex: 1 1 320px;
+  min-width: 0;
 }
 
 .settings-grid > label.field-row.compact > span:first-child {
@@ -1545,6 +1556,10 @@ input[type='checkbox'] {
   gap: 10px 12px;
 }
 
+.settings-grid.stack > label {
+  flex: 1 1 100%;
+}
+
 .settings-grid > label {
   display: inline-flex;
   flex-direction: row;
@@ -1559,13 +1574,23 @@ input[type='checkbox'] {
   color: #2c3a33;
   margin: 0;
   box-sizing: border-box;
-  flex: 1 1 220px;
+  flex: 1 1 300px;
   min-width: 0;
+}
+
+/* 长标签（英文）可换行，不再把开关顶出卡片 */
+.settings-grid label > span:first-child {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  line-height: 1.35;
 }
 
 /* 开关类卡片：文案居左、开关贴右 */
 .settings-grid > label.check-label {
   justify-content: space-between;
+  gap: 12px;
 }
 
 .settings-grid > label > span:first-child {

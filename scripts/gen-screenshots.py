@@ -19,9 +19,9 @@ mod = re.search(r'src="(/assets/dashboard-[^"]+\.js)"', index).group(1)
 stub = open(f'{ROOT}/scripts/screenshot-stub.js', encoding='utf-8').read()
 html = index.replace(
     f'<script type="module" crossorigin src="{mod}"></script>',
-    '<script src="/_stub.js"></script>' + f'<script type="module" crossorigin src="{mod}"></script>')
-open(f'{DIST}/_shot_base.html', 'w', encoding='utf-8').write(html)
-open(f'{DIST}/_stub.js', 'w', encoding='utf-8').write(stub)
+    '<script src="/shot-stub.js"></script>' + f'<script type="module" crossorigin src="{mod}"></script>')
+open(f'{DIST}/shot-base.html', 'w', encoding='utf-8').write(html)
+open(f'{DIST}/shot-stub.js', 'w', encoding='utf-8').write(stub)
 
 server = subprocess.Popen(['python3', '-m', 'http.server', str(PORT)], cwd=DIST,
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -32,9 +32,9 @@ for v in views:
         '--force-device-scale-factor=2', '--window-size=1280,1600',
         '--virtual-time-budget=8000',
         f'--screenshot={OUT}/panel-{v}.png',
-        f'http://127.0.0.1:{PORT}/_shot_base.html?view={v}'], capture_output=True, timeout=120)
+        f'http://127.0.0.1:{PORT}/shot-base.html?view={v}'], capture_output=True, timeout=120)
 server.terminate()
 # 清理：打包与构建都不应包含 harness
-for f in ['_shot_base.html', '_stub.js']:
+for f in ['shot-base.html', 'shot-stub.js']:
     os.remove(f'{DIST}/{f}')
 print('screenshots regenerated:', ', '.join(views))

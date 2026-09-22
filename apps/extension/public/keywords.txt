@@ -636,3 +636,34 @@ subscribe to my channel
 /\bguaranteed\s+(wins?|profit)/i
 /\b100%\s+(win|profit|return)/i
 /\binstant\s+(payout|withdraw)/i
+giveaway
+raffle
+sweepstake
+prize pool
+cash prize
+free mint
+mint now
+allowlist
+/\b(rt|retweet)\s+(to|&|and)\s+(win|enter)\b/i
+/\blike\s*(&|and)\s*(rt|retweet|follow)\b/i
+/\btag\s+\d+\s+friends?\s+to\b/i
+/\benter\s+(to\s+win|now|the\s+giveaway)\b/i
+/\blucky\s+(winner|draw)\b/i
+/\bwinner\s+(selection|announcement)\b/i
+/\bclaim\s+now\b/i
+/\bfree\s+robux\b/i
+/\bfree\s+(vbucks|skins?|fire)\b/i
+/\b(cash|money)\s+flipp/i
+/\bbank\s+logs?\b/i
+/\b(zelle|apple\s+pay)\s+(me|flip)\b/i
+/\bdeposit\s+bonus\b/i
+/\b(sign\s?up|register)\s+here\b/i
+/\bclick\s+the\s+link\s+below\b/i
+/\b(referral|promo)\s+(code|link)\b/i
+/\bwhitelist\s+(spot|slot|live|open)\b/i
+/\blink\s+in\s+(my\s+)?bio\b/i
+/\bact\s+now\b/i
+/\b\d{1,2}%\s*off\b/i
+/\bfollowers\s+cheap\b/i
+/\bbuy\s+followers\b/i
+/\bguaranteed\s+(wins?|profit)/i

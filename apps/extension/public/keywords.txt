@@ -567,7 +567,6 @@ SingLinkVPN
 女仆需要
 附近哥哥
 无偿约
-/\btrading\s+(platform|bot|signals?)\b/i
 onlyfans
 sugar daddy
 sugar baby
@@ -579,34 +578,27 @@ f4f
 follow4follow
 follow for follow
 make money online
-passive income
 check my bio
 click my profile
 fixed match
 betting tips
 join my telegram
-whatsapp group
 free gift card
 giveaway winner
-dm me for
 forex signals
 crypto signals
 cashapp me
 cash app me
-sub to my
 subscribe to my channel
 /[o0]nly\s?f[a4]ns\b/i
 /\bsugar\s+(daddy|mommy|baby)\b/i
 /\bseed\s*phrase\b/i
 /\bfree\s+(nudes|pics|videos|premium)\b/i
 /\bnudes?\s+(for|in\s+dm)\b/i
-/\b(dm|msg|message)\s+me\s+for\b/i
 /\b(cash\s?app|venmo|paypal)\s+(me|us)\b/i
 /\bfollow\s+for\s+follow\b/i
 /\bf4f\b/i
 /\bmake\s+money\s+(online|fast|from\s+home)\b/i
-/\bpassive\s+income\b/i
-/\bearn\s+(\$|usd|\d)/i
 /\b(crypto|btc|eth|nft)\s+(giveaway|airdrop)\b/i
 /\b(claim|win)\s+(your\s+)?(prize|reward|free)\b/i
 /\byou'?ve\s+(been\s+)?(selected|won)\b/i
@@ -621,8 +613,6 @@ subscribe to my channel
 /\bcheck\s+my\s+(bio|pinned)\b/i
 /\bclick\s+(my\s+)?(bio|profile)\b/i
 /\bgrowth\s+(service|expert)\b/i
-/\b(affordable|cheap)\s+(seo|web|logo|design)\b/i
-/\bsocial\s+media\s+(manager|marketing|promoter)\b/i
 /\bcam\s+girl/i
 /\bfind\s+your\s+(match|soulmate)\b/i
 /\blocal\s+(singles|hookups?)\b/i
@@ -637,7 +627,6 @@ subscribe to my channel
 sweepstake
 free mint
 mint now
-allowlist
 /\b(rt|retweet)\s+(to|&|and)\s+(win|enter)\b/i
 /\blike\s*(&|and)\s*(rt|retweet|follow)\b/i
 /\btag\s+\d+\s+friends?\s+to\b/i
@@ -651,11 +640,9 @@ allowlist
 /\bbank\s+logs?\b/i
 /\b(zelle|apple\s+pay)\s+(me|flip)\b/i
 /\bdeposit\s+bonus\b/i
-/\b(sign\s?up|register)\s+here\b/i
 /\bclick\s+the\s+link\s+below\b/i
-/\b(referral|promo)\s+(code|link)\b/i
 /\bwhitelist\s+(spot|slot|live|open)\b/i
-/\bact\s+now\b/i
 /\bfollowers\s+cheap\b/i
 /\bbuy\s+followers\b/i
 /\bguaranteed\s+(wins?|profit)/i
+/\benter\s+to\s+win\b/i

@@ -19,6 +19,25 @@
 
 </div>
 
+## 界面预览 / Screenshots
+
+### 评论区实时判定 / Live judgement bars
+
+![评论区状态条全景](docs/images/promo/1-status-bars.png)
+
+### 自动收起 + 人工纠错 / Auto-collapse & correction
+
+![自动收起后的状态条](docs/images/promo/2-auto-collapsed.png)
+
+### live 状态框 / Live HUD
+
+![live 状态框](docs/images/promo/3-live-hud.png)
+
+### 管理面板 / Dashboard
+
+![管理面板总设置](docs/images/panel-settings.png)
+
+---
 
 一款保护 X（Twitter）浏览体验的浏览器扩展：自动识别并隐藏评论区垃圾内容，把垃圾账号送入待拉黑名单，按安全节奏真实拉黑，并支持社区共享黑名单。
 

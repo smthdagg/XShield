@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         X护盾 — 隐藏词批量导入（561 条）
 // @namespace    xshield
-// @version      1.1.0
-// @description  打开 x.com/settings/muted_keywords，点浮动面板「开始导入」即可。断点续跑，重复自动跳过，可随时停止。
+// @version      1.2.0
+// @description  打开 x.com/settings/muted_keywords，点浮动面板「开始导入」。脚本自动在列表页与添加页之间接力写入，断点续跑，重复自动跳过。
 // @match        https://x.com/settings/muted_keywords*
 // @match        https://x.com/settings/add_muted_keyword*
 // @run-at       document-idle
@@ -15,22 +15,48 @@
   const K_IDX = 'xshieldMuteIdx';
   const K_SAVING = 'xshieldMuteSaving';
   const K_RUN = 'xshieldMuteRun';
-  const STEP_MS = 2000;
+  const STEP_MS = 2500;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const q = (s) => document.querySelector(s);
+  const visible = (el) => el && el.offsetParent !== null;
   const getI = () => parseInt(localStorage.getItem(K_IDX) || '0', 10);
-  const onAdd = () => location.pathname.includes('add_muted_keyword');
+  const onAdd = () => /add_muted_keyword/.test(location.pathname);
 
-  const findAdd = () =>
-    q('[data-testid="addMutedWord"]') ||
-    Array.from(document.querySelectorAll('[data-testid]')).find((e) => /addmutedword/i.test(e.dataset.testid || '')) ||
-    null;
-  const findInput = () => q('input[name="keyword"]') || q('main input[type="text"]') || q('main textarea');
-  const findSave = () =>
-    q('[data-testid="settingsSave"]') ||
-    Array.from(document.querySelectorAll('button')).find((b) => /^(保存|Save)$/i.test(b.textContent.trim())) ||
-    null;
+  // ---- 宽泛查找（X 改版容错）----
+
+  // 添加页的输入框
+  function findInput() {
+    const cands = [
+      q('input[name="keyword"]'),
+      q('[data-testid="keyword"]'),
+      ...Array.from(document.querySelectorAll('input, textarea')),
+    ].filter(Boolean);
+    return cands.find((el) => visible(el) && !/search/i.test(el.getAttribute('aria-label') || '')) || null;
+  }
+
+  // 添加页的保存按钮
+  function findSave() {
+    const byTestid = q('[data-testid="settingsSave"]');
+    if (byTestid && visible(byTestid)) return byTestid;
+    return (
+      Array.from(document.querySelectorAll('button, [role="button"]')).find(
+        (b) => visible(b) && /^(保存|Save|完成|Done)$/i.test(b.textContent.trim())
+      ) || null
+    );
+  }
+
+  // 列表页的「+」：X 现在把它做成跳转 add_muted_keyword 的链接
+  function findAdd() {
+    const link = q('a[href*="add_muted_keyword"]');
+    if (link && visible(link)) return link;
+    const byTestid = q('[data-testid="addMutedWord"]');
+    if (byTestid && visible(byTestid)) return byTestid;
+    const labeled = Array.from(document.querySelectorAll('[aria-label], [data-testid]')).find((e) =>
+      /add.?muted|添加隐藏词/i.test((e.getAttribute('aria-label') || '') + (e.dataset.testid || ''))
+    );
+    return labeled && visible(labeled) ? labeled : null;
+  }
 
   // ---- 浮动面板 ----
   const panel = document.createElement('div');
@@ -46,7 +72,7 @@
   stopBtn.textContent = '停止';
   stopBtn.addEventListener('click', () => {
     localStorage.setItem(K_RUN, '');
-    panel.querySelector('#xsm-p').textContent = '已停止（再点开始导入可续跑）';
+    progress('已停止（再点开始导入可续跑）');
   });
   btn.addEventListener('click', () => {
     localStorage.setItem(K_RUN, '1');
@@ -65,9 +91,9 @@
     btn.textContent = '已完成';
   }
 
-  // ---- 状态机（1.8.0 交付的跨页流程）----
-  // 列表页点 + → 添加页填词保存 → X 跳回列表页 → 下一词。
-  // 每一步只做一件事，进度与标志都在 localStorage，页面跳转后自动接力。
+  // ---- 跨页状态机 ----
+  // 列表页点「+」→ 跳到添加页 → 填词保存 → X 跳回列表页 → 下一词。
+  // 进度与标志都在 localStorage，页面跳转后由本脚本在新页面自动接力。
   function step() {
     if (finished) return;
     let i = getI();
@@ -82,10 +108,10 @@
           input.value = '';
           input.dispatchEvent(new Event('input', { bubbles: true }));
         }
-        logSkip(i);
+        console.log('%c[X护盾] ⏭ 重复跳过', 'color:#d97706;font-weight:bold', WORDS[i]);
       } else {
         // 已跳回列表页 = 保存成功
-        logOk(i);
+        console.log('%c[X护盾] ✅', 'color:#16a34a;font-weight:bold', WORDS[i]);
       }
       i = parseInt(saving, 10) + 1;
       localStorage.setItem(K_IDX, String(i));
@@ -100,6 +126,7 @@
     progress(`第 ${i + 1} / ${WORDS.length} 个：${WORDS[i]}`);
 
     if (onAdd()) {
+      // 添加页：填入当前词并保存
       const input = findInput();
       if (!input) { progress('等待输入框出现…'); return; }
       input.focus();
@@ -108,23 +135,18 @@
       setTimeout(() => {
         const save = findSave();
         if (save) save.click();
-      }, 600);
+      }, 700);
     } else {
+      // 列表页：点「+」进入添加页
       const add = findAdd();
-      if (!add) { progress('找不到 + 按钮（确认在隐藏词列表页）'); return; }
+      if (!add) { progress('找不到「+」入口（确认在隐藏词列表页）'); return; }
       add.click();
     }
   }
-
-  const okLog = (i) => console.log('%c[X护盾] ✅', 'color:#16a34a;font-weight:bold', WORDS[i]);
-  const skipLog = (i) => console.log('%c[X护盾] ⏭ 重复跳过', 'color:#d97706;font-weight:bold', WORDS[i]);
 
   // ---- 主循环 ----
   setInterval(() => {
     if (localStorage.getItem(K_RUN) !== '1' || finished) return;
     step();
   }, STEP_MS);
-
-  function logSkip(i) { console.log('%c[X护盾] ⏭ 重复跳过', 'color:#d97706;font-weight:bold', WORDS[i]); }
-  function logOk(i) { console.log('%c[X护盾] ✅', 'color:#16a34a;font-weight:bold', WORDS[i]); }
 })();

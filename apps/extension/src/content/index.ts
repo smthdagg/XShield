@@ -11,6 +11,7 @@ import {
   parseKeywords,
 } from '../store/blockerStorage';
 import { CATEGORY_LABELS, type AiDecision } from '../background/aiJudge';
+import { startMuteSyncRunner } from './muteSyncRunner';
 import {
   applyHitCategoryClass,
   applyRemembered,
@@ -1416,6 +1417,9 @@ async function init(): Promise<void> {
 
     // First report; afterwards the observer's flush keeps it fresh (see above).
     detectCurrentUser();
+
+    // X 隐藏词写入器：若后台交付了词库任务，在设置页自动执行。
+    startMuteSyncRunner();
   } catch (e) {
     console.error('[X-Blocker] init error:', e);
   }

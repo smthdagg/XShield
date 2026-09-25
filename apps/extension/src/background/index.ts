@@ -722,10 +722,6 @@ async function handleLearnKeywords(text: string, nickname: string): Promise<{ le
 // 轮询显示；手动操作属用户显式授权行为，与自动拉黑互不影响。
 // ---------------------------------------------------------------------------
 
-const X_MUTED_UPDATE_URL = 'https://x.com/i/api/1.1/settings/muted_keywords/update.json';
-const X_MUTED_LIST_URL = 'https://x.com/i/api/1.1/settings/muted_keywords/list.json';
-const X_MUTED_SYNC_DELAY_MS = 700;
-
 let muteSyncRunning = false;
 
 interface MuteSyncProgress {
@@ -749,7 +745,7 @@ async function handleMuteSync(): Promise<Record<string, unknown>> {
   }
   muteSyncRunning = true;
   void (async () => {
-    const progress: MuteSyncProgress = {
+    let progress: MuteSyncProgress = {
       running: true,
       done: 0,
       total: 0,
@@ -759,7 +755,7 @@ async function handleMuteSync(): Promise<Record<string, unknown>> {
     };
     try {
       await writeMuteProgress(progress);
-      // 词库口径与内容脚本一致：云端 + 本地 - 停用
+      // 词库口径与内容脚本一致：云端 + 本地 - 停用；X 隐藏词不支持正则，只取字面词
       const stored = await chrome.storage.local.get(
         getStorageDefaults('keywords', 'cloudKeywords', 'disabledCloudKeywords', 'cloudEnabled'),
       );
@@ -769,99 +765,40 @@ async function handleMuteSync(): Promise<Record<string, unknown>> {
           ? []
           : parseKeywords((stored.cloudKeywords as string) ?? '').filter((k) => !disabled.has(k));
       const localKws = parseKeywords((stored.keywords as string) ?? '');
-      // X 隐藏词不支持正则：只取字面词，去重
       const words = Array.from(new Set([...cloudKws, ...localKws])).filter(
         (k) => !k.startsWith('/'),
       );
-      progress.total = words.length;
+      progress = { ...progress, total: words.length };
       await writeMuteProgress(progress);
 
-      const cookie = await chrome.cookies.get({ url: 'https://x.com', name: 'ct0' });
-      if (!cookie) {
-        progress.error = '未获取到 X 登录凭证，请先打开一次 x.com';
-        progress.running = false;
-        progress.finishedAt = Date.now();
-        await writeMuteProgress(progress);
-        void addLog('error', 'sync', 'X 隐藏词同步失败：未获取到登录凭证');
-        return;
+      // 交给内容脚本驱动 X 的真实添加对话框（直连 REST 写不进，见 1.8.0 排查）
+      await chrome.storage.local.set({
+        xMuteSyncTask: { state: 'running', words, index: 0 },
+      });
+      const settingsUrl = 'https://x.com/settings/muted_keywords';
+      const tabs = await chrome.tabs.query({ url: ['https://x.com/*', 'https://twitter.com/*'] });
+      const existing = tabs.find((t) => (t.url ?? '').includes('/settings/muted_keywords'));
+      if (existing?.id !== undefined) {
+        await chrome.tabs.update(existing.id, { url: settingsUrl, active: true });
+      } else if (tabs[0]?.id !== undefined) {
+        await chrome.tabs.update(tabs[0].id, { url: settingsUrl, active: true });
+      } else {
+        await chrome.tabs.create({ url: settingsUrl, active: true });
       }
-      const headers = {
-        authorization: WEB_BEARER_TOKEN,
-        'x-csrf-token': cookie.value,
-        'content-type': 'application/x-www-form-urlencoded',
-      };
-
-      // 现有隐藏词 → 去重
-      const existing = new Set<string>();
-      try {
-        const listRes = await fetch(X_MUTED_LIST_URL, {
-          headers,
-          credentials: 'include',
-          signal: AbortSignal.timeout(15000),
-        });
-        if (listRes.ok) {
-          const list = (await listRes.json()) as { keywords?: Array<{ keyword?: string }> };
-          (list.keywords ?? []).forEach((k) => {
-            if (k.keyword) existing.add(k.keyword);
-          });
-        }
-      } catch {
-        // 列表拉取失败不阻塞：直接逐条添加，X 侧会容忍重复
-      }
-
-      for (const word of words) {
-        if (!muteSyncRunning) break; // 用户取消
-        progress.done++;
-        if (existing.has(word)) {
-          progress.skip++;
-        } else {
-          try {
-            const res = await fetch(X_MUTED_UPDATE_URL, {
-              method: 'POST',
-              headers,
-              credentials: 'include',
-              body: new URLSearchParams({ keyword: word, duration: 'forever' }).toString(),
-              signal: AbortSignal.timeout(15000),
-            });
-            if (res.ok) {
-              progress.ok++;
-              existing.add(word);
-            } else {
-              progress.fail++;
-              progress.error = `HTTP ${res.status}`;
-            }
-          } catch (e) {
-            progress.fail++;
-            progress.error = e instanceof Error ? e.message : String(e);
-          }
-        }
-        if (progress.done % 10 === 0 || progress.done === progress.total) {
-          await writeMuteProgress(progress);
-        }
-        await new Promise((r) => setTimeout(r, X_MUTED_SYNC_DELAY_MS));
-      }
-      progress.running = false;
-      progress.finishedAt = Date.now();
-      await writeMuteProgress(progress);
       void addLog(
-        progress.fail > 0 ? 'warn' : 'info',
+        'info',
         'sync',
-        `词库同步到 X 隐藏词完成：新增 ${progress.ok} · 跳过 ${progress.skip} · 失败 ${progress.fail}`,
+        `开始同步词库到 X 隐藏词：${words.length} 条（已打开设置页，由页面内自动写入）`,
       );
     } catch (e) {
-      const progress: MuteSyncProgress = {
+      progress = {
+        ...progress,
         running: false,
-        done: 0,
-        total: 0,
-        ok: 0,
-        skip: 0,
-        fail: 0,
         error: e instanceof Error ? e.message : String(e),
         finishedAt: Date.now(),
       };
       await writeMuteProgress(progress);
-      void addLog('error', 'sync', `X 隐藏词同步异常：${progress.error ?? ''}`);
-    } finally {
+      void addLog('error', 'sync', `X 隐藏词同步启动失败：${progress.error ?? ''}`);
       muteSyncRunning = false;
     }
   })();

@@ -181,7 +181,7 @@ const en: Record<string, string> = {
   syncMuteRunning: 'Syncing',
   syncMuteDone: 'Sync finished',
   syncMuteHint:
-    'Uses your logged-in X session to call the official muted-keywords endpoint. Literal words only (X has no regex); existing entries are skipped. View them under Settings → Privacy & safety → Mute and block.',
+    'Opens the X muted-keywords page and writes entries one by one (~1.5 s each; 561 entries ≈ 15 min). Keep the tab open; closing pauses the run — click again to resume from where it stopped. Duplicates are skipped automatically.',
   aiHint:
     'Keywords stay as the base layer. In AI mode a keyword hit is held for the AI verdict (the AI can veto false positives), clean-looking replies get one silent scan, and every reply shows a colored tag: porn-bait / scam / pure ads / bot. The API key is stored locally only; calls go through the extension background with caching and rate limiting.',
   aiStatsLabel: 'Session usage',
@@ -367,7 +367,7 @@ const zhCN: Record<string, string> = {
   syncMuteRunning: '同步中',
   syncMuteDone: '同步完成',
   syncMuteHint:
-    '用已登录的 X 会话直连官方接口写入。只写字面词（X 隐藏词不支持正则），已存在的自动跳过；结果在 设置 → 隐私和安全 → 隐藏和屏蔽 → 隐藏词 查看。',
+    '点击后会自动打开 X 隐藏词设置页并逐条写入（约 1.5 秒/条，561 条约 15 分钟），保持该标签页打开即可；关闭页面即中止，重新点击会从断点继续。重复词自动跳过。',
   aiHint:
     '关键字始终是基础信号。AI 模式下：关键字命中先挂起等 AI 裁决（AI 可否决误报），未命中的回帖做一次静默扫描兜底；每条判定回帖都会实时打上彩色标签（黄推/诈骗/纯广告/人机）。API Key 只存本地；请求由扩展后台统一发出，带缓存与限速。误判可在页面右下角「已隐藏」面板恢复显示。费用按官方定价计算：$42/Btok（十亿 token），仅输入计费、输出免费，HUD 实时显示累计美元成本。',
   aiStatsLabel: '本次会话用量',
@@ -553,7 +553,7 @@ const zhTW: Record<string, string> = {
   syncMuteRunning: '同步中',
   syncMuteDone: '同步完成',
   syncMuteHint:
-    '用已登入的 X 會話直連官方介面寫入。只寫字面詞（X 隱藏詞不支援正則），已存在的自動跳過；結果在 設定 → 隱私和安全 → 隱藏和封鎖 → 隱藏詞 查看。',
+    '點擊後會自動打開 X 隱藏詞設定頁並逐條寫入（約 1.5 秒/條，561 條約 15 分鐘），保持該分頁開啟即可；關閉分頁即中止，重新點擊會從斷點繼續。重複詞自動跳過。',
   aiHint:
     '關鍵字始終是基礎訊號。AI 模式下：關鍵字命中先擱置等 AI 裁決（AI 可否決誤報），未命中的回覆做一次靜默掃描兜底；每條判定回覆都會即時打上彩色標籤（黃推/詐騙/純廣告/人機）。API Key 只存本機；請求由擴充後台統一發出，帶快取與限速。誤判可在頁面右下角「已隱藏」面板恢復顯示。費用按官方定價計算：$42/Btok（十億 token），僅輸入計費、輸出免費，HUD 即時顯示累計美元成本。',
   aiStatsLabel: '本次工作階段用量',

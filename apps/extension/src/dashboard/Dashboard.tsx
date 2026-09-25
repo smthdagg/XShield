@@ -103,6 +103,7 @@ const DEFAULTS: Record<string, unknown> = {
   aiCatBot: true,
   keywordAutoBlock: false,
   aiLearnKeywords: true,
+  xMuteSyncProgress: null as MuteSyncProgress | null,
 };
 
 function DataPanel({
@@ -198,6 +199,17 @@ function send(message: Record<string, unknown>): Promise<unknown> {
 }
 
 const VIEW_IDS: ViewId[] = ['triggered', 'blockedLog', 'whitelist', 'rules', 'logs', 'settings'];
+
+interface MuteSyncProgress {
+  running: boolean;
+  done: number;
+  total: number;
+  ok: number;
+  skip: number;
+  fail: number;
+  finishedAt?: number;
+  error?: string;
+}
 const LAST_VIEW_KEY = 'xshieldLastView';
 
 export interface BlockedEntry {
@@ -1443,7 +1455,7 @@ export default function Dashboard() {
                   <Upload size={16} /> {t.syncMuteBtn}
                 </button>
               </div>
-              {muteSyncProgress && (
+              {muteSyncProgress && muteSyncProgress.total > 0 && (
                 <p className="hint">
                   {muteSyncProgress.running
                     ? `${t.syncMuteRunning}：${muteSyncProgress.done} / ${muteSyncProgress.total} · ✅ ${muteSyncProgress.ok} · ⏭ ${muteSyncProgress.skip} · ❌ ${muteSyncProgress.fail}`

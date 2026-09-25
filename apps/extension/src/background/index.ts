@@ -544,6 +544,10 @@ chrome.runtime.onMessage.addListener((message: Record<string, unknown>, _sender,
     void handleAiTest(String(message.text ?? '')).then(sendResponse);
     return true;
   }
+  if (message.action === 'syncMutedKeywords') {
+    void handleMuteSync().then(sendResponse);
+    return true;
+  }
   if (message.action === 'learnKeywords') {
     void handleLearnKeywords(String(message.text ?? ''), String(message.nickname ?? '')).then(
       sendResponse,
@@ -710,6 +714,158 @@ async function handleLearnKeywords(text: string, nickname: string): Promise<{ le
     console.warn('[XShield] keyword learning skipped:', e);
     return { learned: [] };
   }
+}
+
+// ---------------------------------------------------------------------------
+// 词库 → X 自带隐藏词（1.8.0）：用已登录的 X 会话把词库逐条写入
+// settings/muted_keywords，让用户不装扩展也能挡一层。进度写 storage 供面板
+// 轮询显示；手动操作属用户显式授权行为，与自动拉黑互不影响。
+// ---------------------------------------------------------------------------
+
+const X_MUTED_UPDATE_URL = 'https://x.com/i/api/1.1/settings/muted_keywords/update.json';
+const X_MUTED_LIST_URL = 'https://x.com/i/api/1.1/settings/muted_keywords/list.json';
+const X_MUTED_SYNC_DELAY_MS = 700;
+
+let muteSyncRunning = false;
+
+interface MuteSyncProgress {
+  running: boolean;
+  done: number;
+  total: number;
+  ok: number;
+  skip: number;
+  fail: number;
+  finishedAt?: number;
+  error?: string;
+}
+
+async function writeMuteProgress(progress: MuteSyncProgress): Promise<void> {
+  await chrome.storage.local.set({ xMuteSyncProgress: progress });
+}
+
+async function handleMuteSync(): Promise<Record<string, unknown>> {
+  if (muteSyncRunning) {
+    return { success: false, reason: '同步已在进行中' };
+  }
+  muteSyncRunning = true;
+  void (async () => {
+    const progress: MuteSyncProgress = {
+      running: true,
+      done: 0,
+      total: 0,
+      ok: 0,
+      skip: 0,
+      fail: 0,
+    };
+    try {
+      await writeMuteProgress(progress);
+      // 词库口径与内容脚本一致：云端 + 本地 - 停用
+      const stored = await chrome.storage.local.get(
+        getStorageDefaults('keywords', 'cloudKeywords', 'disabledCloudKeywords', 'cloudEnabled'),
+      );
+      const disabled = new Set((stored.disabledCloudKeywords as string[]) ?? []);
+      const cloudKws =
+        stored.cloudEnabled === false
+          ? []
+          : parseKeywords((stored.cloudKeywords as string) ?? '').filter((k) => !disabled.has(k));
+      const localKws = parseKeywords((stored.keywords as string) ?? '');
+      // X 隐藏词不支持正则：只取字面词，去重
+      const words = Array.from(new Set([...cloudKws, ...localKws])).filter(
+        (k) => !k.startsWith('/'),
+      );
+      progress.total = words.length;
+      await writeMuteProgress(progress);
+
+      const cookie = await chrome.cookies.get({ url: 'https://x.com', name: 'ct0' });
+      if (!cookie) {
+        progress.error = '未获取到 X 登录凭证，请先打开一次 x.com';
+        progress.running = false;
+        progress.finishedAt = Date.now();
+        await writeMuteProgress(progress);
+        void addLog('error', 'sync', 'X 隐藏词同步失败：未获取到登录凭证');
+        return;
+      }
+      const headers = {
+        authorization: WEB_BEARER_TOKEN,
+        'x-csrf-token': cookie.value,
+        'content-type': 'application/x-www-form-urlencoded',
+      };
+
+      // 现有隐藏词 → 去重
+      const existing = new Set<string>();
+      try {
+        const listRes = await fetch(X_MUTED_LIST_URL, {
+          headers,
+          credentials: 'include',
+          signal: AbortSignal.timeout(15000),
+        });
+        if (listRes.ok) {
+          const list = (await listRes.json()) as { keywords?: Array<{ keyword?: string }> };
+          (list.keywords ?? []).forEach((k) => {
+            if (k.keyword) existing.add(k.keyword);
+          });
+        }
+      } catch {
+        // 列表拉取失败不阻塞：直接逐条添加，X 侧会容忍重复
+      }
+
+      for (const word of words) {
+        if (!muteSyncRunning) break; // 用户取消
+        progress.done++;
+        if (existing.has(word)) {
+          progress.skip++;
+        } else {
+          try {
+            const res = await fetch(X_MUTED_UPDATE_URL, {
+              method: 'POST',
+              headers,
+              credentials: 'include',
+              body: new URLSearchParams({ keyword: word, duration: 'forever' }).toString(),
+              signal: AbortSignal.timeout(15000),
+            });
+            if (res.ok) {
+              progress.ok++;
+              existing.add(word);
+            } else {
+              progress.fail++;
+              progress.error = `HTTP ${res.status}`;
+            }
+          } catch (e) {
+            progress.fail++;
+            progress.error = e instanceof Error ? e.message : String(e);
+          }
+        }
+        if (progress.done % 10 === 0 || progress.done === progress.total) {
+          await writeMuteProgress(progress);
+        }
+        await new Promise((r) => setTimeout(r, X_MUTED_SYNC_DELAY_MS));
+      }
+      progress.running = false;
+      progress.finishedAt = Date.now();
+      await writeMuteProgress(progress);
+      void addLog(
+        progress.fail > 0 ? 'warn' : 'info',
+        'sync',
+        `词库同步到 X 隐藏词完成：新增 ${progress.ok} · 跳过 ${progress.skip} · 失败 ${progress.fail}`,
+      );
+    } catch (e) {
+      const progress: MuteSyncProgress = {
+        running: false,
+        done: 0,
+        total: 0,
+        ok: 0,
+        skip: 0,
+        fail: 0,
+        error: e instanceof Error ? e.message : String(e),
+        finishedAt: Date.now(),
+      };
+      await writeMuteProgress(progress);
+      void addLog('error', 'sync', `X 隐藏词同步异常：${progress.error ?? ''}`);
+    } finally {
+      muteSyncRunning = false;
+    }
+  })();
+  return { success: true, started: true };
 }
 
 /** Settings-page connectivity test: judges a fixed sample regardless of engine toggle. */

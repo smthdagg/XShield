@@ -175,6 +175,13 @@ const en: Record<string, string> = {
   aiTestOk: 'Connected — sample verdict',
   aiTestFail: 'Test failed',
   aiGetKey: 'Get an API Key (console.typesafe.ai)',
+  syncMuteBtn: 'Sync keywords to X muted words',
+  syncMuteTitle: 'Write the blocklist into X muted words using your logged-in X session',
+  syncMuteConfirm: 'Write all keywords into X muted words (one by one, takes several minutes)?',
+  syncMuteRunning: 'Syncing',
+  syncMuteDone: 'Sync finished',
+  syncMuteHint:
+    'Uses your logged-in X session to call the official muted-keywords endpoint. Literal words only (X has no regex); existing entries are skipped. View them under Settings → Privacy & safety → Mute and block.',
   aiHint:
     'Keywords stay as the base layer. In AI mode a keyword hit is held for the AI verdict (the AI can veto false positives), clean-looking replies get one silent scan, and every reply shows a colored tag: porn-bait / scam / pure ads / bot. The API key is stored locally only; calls go through the extension background with caching and rate limiting.',
   aiStatsLabel: 'Session usage',
@@ -354,6 +361,13 @@ const zhCN: Record<string, string> = {
   aiTestOk: '连通正常，样本判定',
   aiTestFail: '测试失败',
   aiGetKey: '获取 API Key（console.typesafe.ai）',
+  syncMuteBtn: '同步词库到 X 隐藏词',
+  syncMuteTitle: '用已登录的 X 会话把词库写入 X 隐藏词（设置 → 隐藏词）',
+  syncMuteConfirm: '将把词库逐条写入 X 隐藏词（共数百条，约需数分钟），继续？',
+  syncMuteRunning: '同步中',
+  syncMuteDone: '同步完成',
+  syncMuteHint:
+    '用已登录的 X 会话直连官方接口写入。只写字面词（X 隐藏词不支持正则），已存在的自动跳过；结果在 设置 → 隐私和安全 → 隐藏和屏蔽 → 隐藏词 查看。',
   aiHint:
     '关键字始终是基础信号。AI 模式下：关键字命中先挂起等 AI 裁决（AI 可否决误报），未命中的回帖做一次静默扫描兜底；每条判定回帖都会实时打上彩色标签（黄推/诈骗/纯广告/人机）。API Key 只存本地；请求由扩展后台统一发出，带缓存与限速。误判可在页面右下角「已隐藏」面板恢复显示。费用按官方定价计算：$42/Btok（十亿 token），仅输入计费、输出免费，HUD 实时显示累计美元成本。',
   aiStatsLabel: '本次会话用量',
@@ -533,6 +547,13 @@ const zhTW: Record<string, string> = {
   aiTestOk: '連通正常，樣本判定',
   aiTestFail: '測試失敗',
   aiGetKey: '取得 API Key（console.typesafe.ai）',
+  syncMuteBtn: '同步詞庫到 X 隱藏詞',
+  syncMuteTitle: '用已登入的 X 會話把詞庫寫入 X 隱藏詞（設定 → 隱藏詞）',
+  syncMuteConfirm: '將把詞庫逐條寫入 X 隱藏詞（共數百條，約需數分鐘），繼續？',
+  syncMuteRunning: '同步中',
+  syncMuteDone: '同步完成',
+  syncMuteHint:
+    '用已登入的 X 會話直連官方介面寫入。只寫字面詞（X 隱藏詞不支援正則），已存在的自動跳過；結果在 設定 → 隱私和安全 → 隱藏和封鎖 → 隱藏詞 查看。',
   aiHint:
     '關鍵字始終是基礎訊號。AI 模式下：關鍵字命中先擱置等 AI 裁決（AI 可否決誤報），未命中的回覆做一次靜默掃描兜底；每條判定回覆都會即時打上彩色標籤（黃推/詐騙/純廣告/人機）。API Key 只存本機；請求由擴充後台統一發出，帶快取與限速。誤判可在頁面右下角「已隱藏」面板恢復顯示。費用按官方定價計算：$42/Btok（十億 token），僅輸入計費、輸出免費，HUD 即時顯示累計美元成本。',
   aiStatsLabel: '本次工作階段用量',

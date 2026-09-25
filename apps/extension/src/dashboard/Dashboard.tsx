@@ -312,6 +312,25 @@ export default function Dashboard() {
   );
 
   // ---- actions ----
+  // 词库 → X 隐藏词同步
+  const [muteSyncRunning, setMuteSyncRunning] = useState(false);
+  const muteSyncProgress = useSlice<{
+    running: boolean;
+    done: number;
+    total: number;
+    ok: number;
+    skip: number;
+    fail: number;
+    error?: string;
+  }>(state, 'xMuteSyncProgress', null as unknown as { running: boolean } as never) as {
+    running: boolean;
+    done: number;
+    total: number;
+    ok: number;
+    skip: number;
+    fail: number;
+    error?: string;
+  } | null;
   const triggerSyncRules = (): void => {
     setSyncingRules(true);
     void send({ action: 'syncRules' })
@@ -1406,6 +1425,34 @@ export default function Dashboard() {
                   {state.syncStatus === 'error' ? ` · ${t.syncFailed}` : ''}
                 </span>
               </div>
+              <div className="form-grid inline">
+                <button
+                  className="plain-button"
+                  type="button"
+                  disabled={muteSyncRunning}
+                  title={t.syncMuteTitle}
+                  onClick={() => {
+                    if (window.confirm(t.syncMuteConfirm)) {
+                      setMuteSyncRunning(true);
+                      void send({ action: 'syncMutedKeywords' }).then(() =>
+                        setMuteSyncRunning(false),
+                      );
+                    }
+                  }}
+                >
+                  <Upload size={16} /> {t.syncMuteBtn}
+                </button>
+              </div>
+              {muteSyncProgress && (
+                <p className="hint">
+                  {muteSyncProgress.running
+                    ? `${t.syncMuteRunning}：${muteSyncProgress.done} / ${muteSyncProgress.total} · ✅ ${muteSyncProgress.ok} · ⏭ ${muteSyncProgress.skip} · ❌ ${muteSyncProgress.fail}`
+                    : `${t.syncMuteDone}：✅ ${muteSyncProgress.ok} · ⏭ ${muteSyncProgress.skip} · ❌ ${muteSyncProgress.fail}${
+                        muteSyncProgress.error ? ` · ${muteSyncProgress.error}` : ''
+                      }`}
+                </p>
+              )}
+              <p className="hint">{t.syncMuteHint}</p>
               <p className="hint">{t.rulesSyncHint}</p>
               <p className="hint">{t.syncManualHint}</p>
               <div className="form-grid inline">

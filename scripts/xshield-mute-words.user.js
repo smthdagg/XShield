@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         X护盾 — 隐藏词批量导入（561 条）
 // @namespace    xshield
-// @version      1.2.0
-// @description  打开 x.com/settings/muted_keywords，点浮动面板「开始导入」。脚本自动在列表页与添加页之间接力写入，断点续跑，重复自动跳过。
+// @version      1.2.1
+// @description  打开 x.com/settings/muted_keywords，点面板「开始导入」。自动在列表页与添加页之间接力写入全部词库，断点续跑，重复自动跳过。
 // @match        https://x.com/settings/muted_keywords*
 // @match        https://x.com/settings/add_muted_keyword*
 // @run-at       document-idle
@@ -15,6 +15,7 @@
   const K_IDX = 'xshieldMuteIdx';
   const K_SAVING = 'xshieldMuteSaving';
   const K_RUN = 'xshieldMuteRun';
+  const ADD_URL = 'https://x.com/settings/add_muted_keyword';
   const STEP_MS = 2500;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -23,9 +24,6 @@
   const getI = () => parseInt(localStorage.getItem(K_IDX) || '0', 10);
   const onAdd = () => /add_muted_keyword/.test(location.pathname);
 
-  // ---- 宽泛查找（X 改版容错）----
-
-  // 添加页的输入框
   function findInput() {
     const cands = [
       q('input[name="keyword"]'),
@@ -34,8 +32,6 @@
     ].filter(Boolean);
     return cands.find((el) => visible(el) && !/search/i.test(el.getAttribute('aria-label') || '')) || null;
   }
-
-  // 添加页的保存按钮
   function findSave() {
     const byTestid = q('[data-testid="settingsSave"]');
     if (byTestid && visible(byTestid)) return byTestid;
@@ -44,18 +40,6 @@
         (b) => visible(b) && /^(保存|Save|完成|Done)$/i.test(b.textContent.trim())
       ) || null
     );
-  }
-
-  // 列表页的「+」：X 现在把它做成跳转 add_muted_keyword 的链接
-  function findAdd() {
-    const link = q('a[href*="add_muted_keyword"]');
-    if (link && visible(link)) return link;
-    const byTestid = q('[data-testid="addMutedWord"]');
-    if (byTestid && visible(byTestid)) return byTestid;
-    const labeled = Array.from(document.querySelectorAll('[aria-label], [data-testid]')).find((e) =>
-      /add.?muted|添加隐藏词/i.test((e.getAttribute('aria-label') || '') + (e.dataset.testid || ''))
-    );
-    return labeled && visible(labeled) ? labeled : null;
   }
 
   // ---- 浮动面板 ----
@@ -92,27 +76,16 @@
   }
 
   // ---- 跨页状态机 ----
-  // 列表页点「+」→ 跳到添加页 → 填词保存 → X 跳回列表页 → 下一词。
-  // 进度与标志都在 localStorage，页面跳转后由本脚本在新页面自动接力。
+  // 添加页：填词 → 保存 → X 跳回列表页；
+  // 列表页：推进进度 → 直接跳回添加页写下一个词。全程不依赖「+」按钮。
   function step() {
     if (finished) return;
+    if (localStorage.getItem(K_RUN) !== '1') return;
     let i = getI();
     const saving = localStorage.getItem(K_SAVING);
 
     if (saving !== null && saving !== '') {
-      // 上一个词已点过保存：
-      if (onAdd()) {
-        // 还在添加页 = 保存被拒（重复词）→ 跳过该词，清空输入
-        const input = findInput();
-        if (input) {
-          input.value = '';
-          input.dispatchEvent(new Event('input', { bubbles: true }));
-        }
-        console.log('%c[X护盾] ⏭ 重复跳过', 'color:#d97706;font-weight:bold', WORDS[i]);
-      } else {
-        // 已跳回列表页 = 保存成功
-        console.log('%c[X护盾] ✅', 'color:#16a34a;font-weight:bold', WORDS[i]);
-      }
+      // 上一个词已点过保存（X 正在/已经跳回列表）：推进进度
       i = parseInt(saving, 10) + 1;
       localStorage.setItem(K_IDX, String(i));
       localStorage.removeItem(K_SAVING);
@@ -137,10 +110,8 @@
         if (save) save.click();
       }, 700);
     } else {
-      // 列表页：点「+」进入添加页
-      const add = findAdd();
-      if (!add) { progress('找不到「+」入口（确认在隐藏词列表页）'); return; }
-      add.click();
+      // 列表页：直接跳到添加页写下一个词（不需要点 +）
+      location.href = ADD_URL;
     }
   }
 
@@ -149,4 +120,7 @@
     if (localStorage.getItem(K_RUN) !== '1' || finished) return;
     step();
   }, STEP_MS);
+
+  // 页面加载后立即执行一步
+  setTimeout(step, 1200);
 })();
